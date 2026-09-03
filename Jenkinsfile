@@ -20,16 +20,24 @@ pipeline {
             }
         }
 
+        stage('Triage') {
+            steps {
+                withCredentials([string(credentialsId: 'anthropic-api-key', variable: 'ANTHROPIC_API_KEY')]) {
+                    sh '''
+                        pip install --quiet --break-system-packages anthropic
+                        python3 scripts/triage.py \
+                            --report-dir target/allure-results \
+                            --build-url $BUILD_URL \
+                            --output triage-report.md
+                    '''
+                }
+            }
+        }
+
         stage('Publish') {
             steps {
                 allure includeProperties: false, results: [[path: 'target/allure-results']]
-                publishHTML(target: [
-                    reportName: 'Allure Report',
-                    reportDir: 'target/site/allure-maven-plugin',
-                    reportFiles: 'index.html',
-                    keepAll: true,
-                    alwaysLinkToLastBuild: true
-                ])
+                archiveArtifacts artifacts: 'triage-report.md', fingerprint: true
             }
         }
     }
