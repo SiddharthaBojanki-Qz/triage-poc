@@ -20,22 +20,68 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>CI Triage Report</title>
 <style>
-  body {{ font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 900px;
-         margin: 40px auto; padding: 0 20px; color: #1a1a1a; line-height: 1.6; }}
-  h1 {{ border-bottom: 3px solid #2563eb; padding-bottom: 10px; }}
-  h2 {{ color: #2563eb; margin-top: 30px; }}
-  table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
-  th, td {{ border: 1px solid #ddd; padding: 10px; text-align: left; }}
-  th {{ background: #f0f4ff; }}
-  code, pre {{ background: #f5f5f5; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }}
-  pre {{ padding: 12px; overflow-x: auto; }}
-  .meta {{ color: #666; font-size: 0.9em; margin-bottom: 25px; }}
+  :root {{
+    --blue: #2563eb; --blue-light: #eff6ff;
+    --red: #dc2626; --red-light: #fef2f2;
+    --gray-bg: #f8fafc; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--gray-bg); color: var(--text); margin: 0; padding: 0;
+  }}
+  .wrapper {{ max-width: 920px; margin: 0 auto; padding: 40px 24px 80px; }}
+  .header {{
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: white; border-radius: 14px; padding: 28px 32px; margin-bottom: 28px;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.25);
+  }}
+  .header h1 {{ margin: 0 0 8px; font-size: 26px; }}
+  .header a {{ color: #dbeafe; text-decoration: underline; font-size: 14px; }}
+  .card {{
+    background: white; border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }}
+  .card h2 {{
+    margin-top: 0; font-size: 18px; color: var(--blue);
+    border-bottom: 2px solid var(--blue-light); padding-bottom: 10px;
+  }}
+  table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }}
+  th {{
+    background: var(--blue-light); color: var(--blue); text-align: left;
+    padding: 10px 14px; border-bottom: 2px solid var(--border);
+  }}
+  td {{ padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  tr:last-child td {{ border-bottom: none; }}
+  .badge {{
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; background: var(--red-light); color: var(--red);
+  }}
+  code {{
+    background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+    font-size: 0.88em; color: #be185d;
+  }}
+  pre {{
+    background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 8px;
+    overflow-x: auto; font-size: 13px; line-height: 1.5;
+  }}
+  h3 {{ color: var(--text); font-size: 16px; margin: 20px 0 8px; }}
+  ul {{ padding-left: 20px; }}
+  li {{ margin-bottom: 10px; line-height: 1.6; }}
+  .footer {{ text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; }}
 </style>
 </head>
 <body>
-<h1>CI Triage Report</h1>
-<p class="meta">Build: <a href="{build_url}">{build_url}</a></p>
-{content}
+<div class="wrapper">
+  <div class="header">
+    <h1>🔍 CI Triage Report</h1>
+    <a href="{build_url}">{build_url}</a>
+  </div>
+  <div class="card">
+    {content}
+  </div>
+  <div class="footer">Generated automatically by the AI Triage Agent</div>
+</div>
 </body>
 </html>
 """
@@ -89,12 +135,10 @@ def call_openai(prompt: str) -> str:
 
 
 def markdown_to_html(md_text: str) -> str:
-    """Minimal Markdown -> HTML conversion (headers, bold, tables, code, paragraphs)."""
     try:
         import markdown
         return markdown.markdown(md_text, extensions=["tables", "fenced_code"])
     except ImportError:
-        # Fallback: wrap as preformatted text if the 'markdown' package isn't available
         escaped = md_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f"<pre>{escaped}</pre>"
 
@@ -109,8 +153,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--build-url", required=True)
-    parser.add_argument("--output", required=True, help="Path for the .md output")
-    parser.add_argument("--html-output", required=True, help="Path for the .html output")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--html-output", required=True)
     args = parser.parse_args()
 
     report_dir = Path(args.report_dir)
