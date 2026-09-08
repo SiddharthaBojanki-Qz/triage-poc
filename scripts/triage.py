@@ -2,616 +2,284 @@
 import argparse
 import json
 import sys
+import os
+import urllib.request
 from pathlib import Path
 
 from openai import OpenAI
 
+TRIAGE_SYSTEM_PROMPT = """You are a Principal QA Engineer performing a formal triage review of a CI
+build's failing tests for an engineering team. Your audience includes both engineers and
+non-technical stakeholders (release managers, product owners), so the report must be precise for
+engineers but scannable for a five-minute stakeholder read.
 
-TRIAGE_SYSTEM_PROMPT = """You are a CI triage assistant. Given failing test details, produce a
-concise Markdown report with exactly these sections:
+You will receive structured per-test failure data (test name, exception/assertion message, stack
+trace) and possibly a tail of the raw Jenkins console log for additional build-level context.
 
-## Summary
-Provide a concise 1-2 sentence overview of the overall build health.
+Produce a Markdown report with EXACTLY these sections, in this order:
 
-## Failures Table
-Create a Markdown table with these columns:
-Test Name | Likely Category | One-Line Cause
+## Executive Summary
+2-4 sentences: overall build health, whether failures are release-blocking, and the dominant theme
+(e.g. "isolated UI locator drift" vs "systemic API contract regression"). State a clear go/no-go
+recommendation for release if the evidence supports one.
 
-Likely Category must be one of:
-regression, flaky, environment, test-bug
+## Failure Overview
+A Markdown table with columns: Test | Module | Category | Severity | Confidence | One-line Cause.
+- Category: one of [ui-locator, timeout, api-contract, concurrency, null-safety, bounds-check,
+  logic-bug, flaky, environment, unknown]
+- Severity: Critical / High / Medium / Low, based on likely user/business impact, not just whether
+  it's an exception vs assertion failure.
+- Confidence: High / Medium / Low — how confident you are in the root cause given the evidence.
 
-## Detailed Failure Analysis
-For each failure, create a subsection using the test name as the heading and provide:
+## Correlation Analysis
+Explicitly state which failures are likely related (shared root cause) versus which are independent,
+isolated issues. If two failures could plausibly share a cause, say so and explain the reasoning; if
+they are unrelated, say that explicitly too. Do not assume correlation without evidence.
 
-- **Root Cause Hypothesis:** Explain the likely cause using only the actual error messages and stack traces provided.
-- **Suggested Fix:** Provide a practical recommendation.
+## Prioritized Remediation Plan
+A numbered, ordered list of what to fix first and why, considering severity, confidence, and blast
+radius (how many other tests/features a fix might affect). Include a rough relative effort estimate
+(Small/Medium/Large) for each.
 
-Be specific and reference the actual error messages/stack traces given.
-Do not invent details not present in the input.
-"""
+## Detailed Findings
+For each failure, in the same order as the table:
+### <Test Name>
+- **Root cause hypothesis:** specific, evidence-based, cites the exact exception/message/line given.
+- **Evidence:** quote the specific error text that supports the hypothesis.
+- **Suggested fix:** concrete and technical (code-level or config-level), not generic advice.
+- **Suggested owner:** which team would likely own this (e.g. Frontend, Backend/API, QA Automation,
+  Infra) based on the nature of the failure.
 
+Rules:
+- Never invent details, file names, or line numbers not present in the input.
+- If evidence is insufficient to determine a root cause confidently, say so explicitly and mark
+  Confidence as Low rather than guessing.
+- Be direct and specific — avoid vague phrases like "there might be an issue" without grounding them
+  in the actual evidence given."""
 
 HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
-
 <meta charset="UTF-8">
-
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <title>CI Triage Report</title>
-
 <style>
-
-* {{
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}}
-
-body {{
-    font-family: Arial, Helvetica, sans-serif;
-    background: #f4f7fb;
-    color: #1e293b;
-    line-height: 1.6;
-}}
-
-.wrapper {{
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 40px 25px 70px;
-}}
-
-
-/* =========================
-   HEADER
-========================= */
-
-.header {{
-    background: #1e40af;
-    color: white;
-    padding: 35px;
-    border-radius: 16px;
-    margin-bottom: 30px;
-    box-shadow: 0 8px 25px rgba(30, 64, 175, 0.25);
-}}
-
-.header-top {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 20px;
-}}
-
-.header h1 {{
-    font-size: 30px;
-    margin-bottom: 8px;
-}}
-
-.header p {{
-    color: #dbeafe;
-    font-size: 15px;
-}}
-
-.status-badge {{
-    background: #fee2e2;
-    color: #dc2626;
-    padding: 9px 16px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: bold;
-}}
-
-.build-link {{
-    display: inline-block;
-    margin-top: 20px;
-    padding: 10px 16px;
-    background: #ffffff;
-    color: #1d4ed8;
-    text-decoration: none;
-    border-radius: 8px;
-    font-weight: bold;
-    font-size: 14px;
-}}
-
-
-/* =========================
-   CONTENT CARDS
-========================= */
-
-.card {{
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 30px;
-    margin-bottom: 24px;
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
-}}
-
-.card h2 {{
-    font-size: 21px;
-    color: #1e3a8a;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #dbeafe;
-}}
-
-.card h3 {{
-    color: #0f172a;
-    font-size: 17px;
-    margin-top: 28px;
-    margin-bottom: 15px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #e2e8f0;
-}}
-
-
-/* =========================
-   PARAGRAPHS
-========================= */
-
-p {{
-    margin-bottom: 15px;
-    color: #475569;
-    font-size: 15px;
-}}
-
-
-/* =========================
-   TABLE
-========================= */
-
-.table-wrapper {{
-    overflow-x: auto;
-}}
-
-table {{
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 15px;
-    font-size: 14px;
-}}
-
-th {{
-    background: #eff6ff;
-    color: #1d4ed8;
-    text-align: left;
-    padding: 14px;
-    font-weight: bold;
-    border-bottom: 2px solid #bfdbfe;
-}}
-
-td {{
-    padding: 14px;
-    border-bottom: 1px solid #e2e8f0;
-    vertical-align: top;
-    color: #475569;
-}}
-
-tr:hover {{
-    background: #f8fafc;
-}}
-
-tr:last-child td {{
-    border-bottom: none;
-}}
-
-
-/* =========================
-   LISTS
-========================= */
-
-ul {{
-    list-style: none;
-    padding: 0;
-}}
-
-li {{
-    background: #f8fafc;
-    border-left: 4px solid #2563eb;
-    padding: 16px;
-    margin-bottom: 14px;
-    border-radius: 8px;
-    color: #475569;
-}}
-
-li strong {{
-    color: #0f172a;
-}}
-
-
-/* =========================
-   CODE
-========================= */
-
-code {{
-    background: #f1f5f9;
-    color: #be123c;
-    padding: 3px 6px;
-    border-radius: 4px;
-    font-family: Consolas, monospace;
-    font-size: 13px;
-}}
-
-pre {{
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 18px;
-    border-radius: 10px;
-    overflow-x: auto;
-    margin: 15px 0;
-    font-size: 13px;
-}}
-
-
-/* =========================
-   FOOTER
-========================= */
-
-.footer {{
-    text-align: center;
-    color: #64748b;
-    font-size: 13px;
-    margin-top: 35px;
-    padding-top: 20px;
-}}
-
-
-/* =========================
-   RESPONSIVE
-========================= */
-
-@media (max-width: 700px) {{
-
-    .wrapper {{
-        padding: 20px 15px;
-    }}
-
-    .header {{
-        padding: 25px;
-    }}
-
-    .header h1 {{
-        font-size: 24px;
-    }}
-
-    .card {{
-        padding: 20px;
-    }}
-
-}}
-
+  :root {{
+    --blue: #2563eb; --blue-light: #eff6ff;
+    --red: #dc2626; --red-light: #fef2f2;
+    --amber: #d97706; --amber-light: #fffbeb;
+    --green: #16a34a; --green-light: #f0fdf4;
+    --gray-bg: #f8fafc; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--gray-bg); color: var(--text); margin: 0; padding: 0;
+  }}
+  .wrapper {{ max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }}
+  .header {{
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: white; border-radius: 14px; padding: 28px 32px; margin-bottom: 20px;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.25);
+  }}
+  .header h1 {{ margin: 0 0 8px; font-size: 26px; }}
+  .header .sub {{ opacity: 0.85; font-size: 14px; margin-bottom: 10px; }}
+  .header a {{ color: #dbeafe; text-decoration: underline; font-size: 14px; }}
+  .stat-row {{ display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }}
+  .stat {{
+    flex: 1; min-width: 130px; background: white; border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }}
+  .stat .num {{ font-size: 26px; font-weight: 700; }}
+  .stat .label {{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }}
+  .stat.pass .num {{ color: var(--green); }}
+  .stat.fail .num {{ color: var(--red); }}
+  .stat.total .num {{ color: var(--blue); }}
+  .card {{
+    background: white; border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }}
+  .card h2 {{
+    margin-top: 0; font-size: 18px; color: var(--blue);
+    border-bottom: 2px solid var(--blue-light); padding-bottom: 10px;
+  }}
+  table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13.5px; }}
+  th {{
+    background: var(--blue-light); color: var(--blue); text-align: left;
+    padding: 10px 12px; border-bottom: 2px solid var(--border);
+  }}
+  td {{ padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  tr:last-child td {{ border-bottom: none; }}
+  code {{
+    background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+    font-size: 0.88em; color: #be185d;
+  }}
+  pre {{
+    background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 8px;
+    overflow-x: auto; font-size: 13px; line-height: 1.5;
+  }}
+  h3 {{ color: var(--text); font-size: 16px; margin: 22px 0 8px; padding-top: 12px; border-top: 1px dashed var(--border); }}
+  ul, ol {{ padding-left: 20px; }}
+  li {{ margin-bottom: 10px; line-height: 1.6; }}
+  .footer {{ text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; }}
 </style>
-
 </head>
-
-
 <body>
-
 <div class="wrapper">
-
-
-    <!-- HEADER -->
-
-    <div class="header">
-
-        <div class="header-top">
-
-            <div>
-
-                <h1>CI Triage Report</h1>
-
-                <p>
-                    Automated AI-powered analysis of CI test failures
-                </p>
-
-            </div>
-
-
-            <div class="status-badge">
-                BUILD FAILURE
-            </div>
-
-        </div>
-
-
-        <a class="build-link" href="{build_url}">
-            View Jenkins Build
-        </a>
-
-    </div>
-
-
-    <!-- REPORT CONTENT -->
-
-    <div class="card">
-
-        {content}
-
-    </div>
-
-
-    <!-- FOOTER -->
-
-    <div class="footer">
-
-        Generated automatically by the AI Triage Agent
-
-    </div>
-
-
+  <div class="header">
+    <h1>🔍 CI Triage Report</h1>
+    <div class="sub">Automated AI-powered failure analysis</div>
+    <a href="{build_url}">{build_url}</a>
+  </div>
+  <div class="stat-row">
+    <div class="stat total"><div class="num">{total}</div><div class="label">Total Tests</div></div>
+    <div class="stat pass"><div class="num">{passed}</div><div class="label">Passed</div></div>
+    <div class="stat fail"><div class="num">{failed}</div><div class="label">Failed</div></div>
+    <div class="stat"><div class="num">{pass_rate}%</div><div class="label">Pass Rate</div></div>
+  </div>
+  <div class="card">
+    {content}
+  </div>
+  <div class="footer">Generated automatically by the AI Triage Agent</div>
 </div>
-
 </body>
-
 </html>
 """
 
 
 def load_allure_results(report_dir: Path):
     results = []
-
     for f in report_dir.glob("*-result.json"):
         try:
             results.append(json.loads(f.read_text()))
         except json.JSONDecodeError:
             continue
-
     return results
 
 
 def summarize_failures(results):
     failures = []
-
     for r in results:
-
         status = r.get("status")
-
         if status in ("failed", "broken"):
-
-            status_details = r.get("statusDetails") or {}
-
             failures.append({
                 "name": r.get("fullName") or r.get("name"),
                 "status": status,
-                "message": status_details.get("message", ""),
-                "trace": status_details.get("trace", "")[:3000],
+                "message": (r.get("statusDetails") or {}).get("message", ""),
+                "trace": (r.get("statusDetails") or {}).get("trace", "")[:3000],
             })
-
     return failures
 
 
-def build_prompt(failures, build_url):
+def fetch_console_log_tail(build_url: str, max_lines: int = 150) -> str:
+    url = build_url.rstrip("/") + "/consoleText"
+    try:
+        req = urllib.request.Request(url)
+        user = os.environ.get("JENKINS_USER")
+        token = os.environ.get("JENKINS_API_TOKEN")
+        if user and token:
+            import base64
+            creds = base64.b64encode(f"{user}:{token}".encode()).decode()
+            req.add_header("Authorization", f"Basic {creds}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        return "\n".join(lines[-max_lines:])
+    except Exception as e:
+        print(f"Warning: could not fetch console log ({e})", file=sys.stderr)
+        return ""
 
+
+def build_prompt(failures, build_url, console_tail, total, passed):
     parts = [
         f"Build: {build_url}",
-        f"Failed/broken test count: {len(failures)}",
-        ""
+        f"Total tests: {total}, Passed: {passed}, Failed/broken: {len(failures)}",
+        "",
     ]
-
-    for failure in failures:
-
-        parts.append(
-            f"### {failure['name']} ({failure['status']})"
-        )
-
-        parts.append(
-            f"Message: {failure['message']}"
-        )
-
-        parts.append(
-            f"Trace:\n{failure['trace']}"
-        )
-
+    for f in failures:
+        parts.append(f"### {f['name']} ({f['status']})")
+        parts.append(f"Message: {f['message']}")
+        parts.append(f"Trace:\n{f['trace']}")
         parts.append("")
-
+    if console_tail:
+        parts.append("### Console log (tail, for extra context)")
+        parts.append(f"```\n{console_tail}\n```")
     return "\n".join(parts)
 
 
 def call_openai(prompt: str) -> str:
-
     client = OpenAI()
-
     response = client.chat.completions.create(
-
         model="gpt-4o",
-
-        max_tokens=2000,
-
+        max_tokens=4000,
+        temperature=0.2,
         messages=[
-            {
-                "role": "system",
-                "content": TRIAGE_SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": prompt
-            },
+            {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ],
-
     )
-
     return response.choices[0].message.content
 
 
 def markdown_to_html(md_text: str) -> str:
-
     try:
-
         import markdown
-
-        return markdown.markdown(
-
-            md_text,
-
-            extensions=[
-                "tables",
-                "fenced_code"
-            ]
-
-        )
-
+        return markdown.markdown(md_text, extensions=["tables", "fenced_code"])
     except ImportError:
-
-        escaped = (
-            md_text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-
+        escaped = md_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f"<pre>{escaped}</pre>"
 
 
-def write_reports(
-    body_markdown: str,
-    build_url: str,
-    md_path: str,
-    html_path: str
-):
-
-    markdown_content = (
-        f"# CI Triage Report\n\n"
-        f"Build: {build_url}\n\n"
-        f"{body_markdown}\n"
-    )
-
-    Path(md_path).write_text(
-        markdown_content,
-        encoding="utf-8"
-    )
-
-
+def write_reports(body_markdown, build_url, md_path, html_path, total, passed, failed):
+    Path(md_path).write_text(f"# Triage Report\n\nBuild: {build_url}\n\n{body_markdown}\n")
     html_content = markdown_to_html(body_markdown)
-
-
-    final_html = HTML_TEMPLATE.format(
-
-        build_url=build_url,
-
-        content=html_content
-
-    )
-
-
-    Path(html_path).write_text(
-        final_html,
-        encoding="utf-8"
-    )
+    pass_rate = round((passed / total) * 100, 1) if total else 100
+    Path(html_path).write_text(HTML_TEMPLATE.format(
+        build_url=build_url, content=html_content,
+        total=total, passed=passed, failed=failed, pass_rate=pass_rate,
+    ))
 
 
 def main():
-
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--report-dir",
-        required=True
-    )
-
-    parser.add_argument(
-        "--build-url",
-        required=True
-    )
-
-    parser.add_argument(
-        "--output",
-        required=True
-    )
-
-    parser.add_argument(
-        "--html-output",
-        required=True
-    )
-
-
+    parser.add_argument("--report-dir", required=True)
+    parser.add_argument("--build-url", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--html-output", required=True)
+    parser.add_argument("--no-console-log", action="store_true")
     args = parser.parse_args()
 
-
     report_dir = Path(args.report_dir)
-
-
     if not report_dir.exists():
-
-        print(
-            f"Report dir not found: {report_dir}",
-            file=sys.stderr
-        )
-
+        print(f"Report dir not found: {report_dir}", file=sys.stderr)
         sys.exit(1)
 
-
     results = load_allure_results(report_dir)
+    # Only count actual test cases (skip container/before/after entries without a status)
+    test_results = [r for r in results if r.get("status") is not None]
+    total = len(test_results)
+    failures = summarize_failures(test_results)
+    passed = total - len(failures)
 
+    console_tail = "" if args.no_console_log else fetch_console_log_tail(args.build_url)
 
-    failures = summarize_failures(results)
-
-
-    if not failures:
-
-        write_reports(
-
-            body_markdown="""
-## Summary
-
-All tests passed successfully. No failures were detected during this build.
-
-## Failures Table
-
-No failed or broken tests were found.
-
-## Detailed Failure Analysis
-
-No failure analysis is required because the build completed without test failures.
-""",
-
-            build_url=args.build_url,
-
-            md_path=args.output,
-
-            html_path=args.html_output
-
-        )
-
-
-        print(
-            "No failures found — wrote a clean-bill-of-health report."
-        )
-
+    if not failures and not console_tail:
+        write_reports("All tests passed. No triage needed.", args.build_url,
+                       args.output, args.html_output, total, passed, 0)
+        print("No failures found — wrote a clean-bill-of-health report.")
         return
 
-
-    prompt = build_prompt(
-
-        failures,
-
-        args.build_url
-
-    )
-
+    if not failures:
+        prompt = (f"Build: {args.build_url}\n\nNo individual test failures were recorded, but the "
+                  f"build may have failed at an earlier stage. Console log tail:\n```\n{console_tail}\n```")
+    else:
+        prompt = build_prompt(failures, args.build_url, console_tail, total, passed)
 
     report_body = call_openai(prompt)
 
-
-    write_reports(
-
-        body_markdown=report_body,
-
-        build_url=args.build_url,
-
-        md_path=args.output,
-
-        html_path=args.html_output
-
-    )
-
-
-    print(
-        f"Wrote triage reports to "
-        f"{args.output} and {args.html_output}"
-    )
+    write_reports(report_body, args.build_url, args.output, args.html_output,
+                  total, passed, len(failures))
+    print(f"Wrote triage reports to {args.output} and {args.html_output}")
 
 
 if __name__ == "__main__":
