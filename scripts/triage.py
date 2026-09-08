@@ -54,24 +54,64 @@ MAX_TRACE_LENGTH = 4000
 MAX_CONSOLE_LINES = 250
 MAX_FAILURES_FOR_AI = 100
 
+# Business-facing triage taxonomy. All final classifications must use only
+# one of these five categories.
 CATEGORIES = [
-    "ui-locator",
-    "timeout",
-    "api-contract",
-    "concurrency",
-    "null-safety",
-    "bounds-check",
-    "logic-bug",
-    "flaky",
-    "environment",
-    "build",
-    "infrastructure",
-    "assertion",
-    "unknown",
+    "Application Defect",
+    "Environment Issue",
+    "Test Data Issue",
+    "Script Defect",
+    "Unknown",
 ]
 
 SEVERITY_ORDER = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
 CONFIDENCE_ORDER = {"High": 3, "Medium": 2, "Low": 1}
+
+
+# Canonical category enforcement.
+# This is intentionally applied after AI analysis as well, so even if an AI
+# response contains an old/internal technical label, the final report can
+# NEVER expose a category outside the agreed five-category taxonomy.
+LEGACY_CATEGORY_MAP = {
+    "logic-bug": "Application Defect",
+    "null-safety": "Application Defect",
+    "bounds-check": "Application Defect",
+    "concurrency": "Application Defect",
+    "api-contract": "Application Defect",
+    "assertion": "Application Defect",
+    "ui-locator": "Script Defect",
+    "flaky": "Script Defect",
+    "timeout": "Environment Issue",
+    "environment": "Environment Issue",
+    "build": "Environment Issue",
+    "infrastructure": "Environment Issue",
+    "application defect": "Application Defect",
+    "environment issue": "Environment Issue",
+    "test data issue": "Test Data Issue",
+    "script defect": "Script Defect",
+    "unknown": "Unknown",
+}
+
+
+def normalize_category(category: Any) -> str:
+    """Return ONLY one of the five approved final categories."""
+    raw = str(category or "").strip()
+    if raw in CATEGORIES:
+        return raw
+    normalized = raw.lower().replace("_", "-").replace(" ", "-")
+    return LEGACY_CATEGORY_MAP.get(
+        raw.lower(),
+        LEGACY_CATEGORY_MAP.get(normalized, "Unknown"),
+    )
+
+
+def enforce_category_taxonomy(analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize every AI-generated category before rendering."""
+    for cluster in analysis.get("clusters") or []:
+        cluster["category"] = normalize_category(cluster.get("category"))
+    for finding in analysis.get("detailed_findings") or []:
+        finding["category"] = normalize_category(finding.get("category"))
+    return analysis
 
 
 # ============================================================
@@ -319,56 +359,70 @@ def generate_fingerprint(message: str, trace: str, exception_type: str) -> tuple
 
 
 def classify_failure_rules(message: str, trace: str, exception_type: str) -> str:
-    """Deterministic first-pass classification used as evidence for AI."""
+    """
+    Deterministic first-pass classification using the agreed business taxonomy.
+
+    This classification is intentionally conservative. It is evidence for the
+    AI triage step, not a claim of proven root cause. Ambiguous failures remain
+    Unknown rather than being forced into an incorrect category.
+    """
     source = f"{message} {trace} {exception_type}".lower()
 
-    rules = [
-        ("ui-locator", [
-            "nosuchelementexception", "elementnotfound", "unable to locate",
-            "locator", "selector", "staleelementreference", "webelement",
-        ]),
-        ("timeout", [
-            "timeoutexception", "timeout", "timed out", "waited for",
-            "read timed out", "sockettimeout",
-        ]),
-        ("api-contract", [
-            "unexpected status", "http status", "status code", "schema validation",
-            "response body", "jsonpath", "contract", "expected:<", "expected:",
-        ]),
-        ("concurrency", [
-            "concurrentmodificationexception", "deadlock", "race condition",
-            "lock acquisition", "thread",
-        ]),
-        ("null-safety", [
-            "nullpointerexception", "cannot invoke", " is null", "none type",
-        ]),
-        ("bounds-check", [
-            "indexoutofboundsexception", "arrayindexoutofboundsexception",
-            "stringindexoutofboundsexception",
-        ]),
-        ("environment", [
-            "connection refused", "unknown host", "dns", "certificate",
-            "ssl", "unable to connect", "service unavailable",
-        ]),
-        ("infrastructure", [
-            "agent offline", "workspace", "disk space", "out of memory",
-            "docker", "kubernetes", "node lost",
-        ]),
-        ("build", [
-            "compilation failure", "could not resolve dependencies",
-            "maven", "gradle", "dependency resolution",
-        ]),
-        ("assertion", [
-            "assertionerror", "assert failed", "expected", "but was",
-        ]),
+    # Test automation implementation problems.
+    script_keywords = [
+        "nosuchelementexception", "elementnotfound", "unable to locate",
+        "locator", "selector", "staleelementreference", "webelement",
+        "invalid selector", "invalidselector", "element click intercepted",
+        "test script", "automation script", "page object",
     ]
 
-    for category, keywords in rules:
-        if any(keyword in source for keyword in keywords):
-            return category
+    # Problems strongly associated with the application/product under test.
+    application_keywords = [
+        "nullpointerexception", "cannot invoke", " is null", "none type",
+        "indexoutofboundsexception", "arrayindexoutofboundsexception",
+        "stringindexoutofboundsexception", "concurrentmodificationexception",
+        "deadlock", "race condition", "unexpected status", "http status",
+        "status code", "schema validation", "response body", "jsonpath",
+        "contract violation", "business rule", "internal server error",
+        "500 internal", "application error",
+    ]
 
-    return "unknown"
+    # Test fixture/input/seed data problems.
+    test_data_keywords = [
+        "test data", "testdata", "fixture", "dataset", "seed data",
+        "missing data", "invalid data", "duplicate data", "duplicate key",
+        "data not found", "record not found", "no data available",
+        "invalid input data", "data setup", "precondition data",
+        "unique constraint", "foreign key constraint",
+    ]
 
+    # CI/runtime/dependency/platform problems.
+    environment_keywords = [
+        "connection refused", "unknown host", "unknownhostexception", "dns",
+        "certificate", "ssl", "tls", "unable to connect", "service unavailable",
+        "agent offline", "workspace", "disk space", "out of memory",
+        "outofmemoryerror", "docker", "kubernetes", "node lost",
+        "compilation failure", "could not resolve dependencies",
+        "dependency resolution", "network is unreachable", "connection reset",
+        "sockettimeout", "read timed out",
+    ]
+
+    # Order matters: explicit data/environment evidence is more specific than
+    # generic assertions or exceptions.
+    if any(keyword in source for keyword in test_data_keywords):
+        return "Test Data Issue"
+
+    if any(keyword in source for keyword in environment_keywords):
+        return "Environment Issue"
+
+    if any(keyword in source for keyword in script_keywords):
+        return "Script Defect"
+
+    if any(keyword in source for keyword in application_keywords):
+        return "Application Defect"
+
+    # Assertions and generic timeouts are ambiguous without more context.
+    return "Unknown"
 
 def preprocess_failures(failures: List[Failure]) -> List[Failure]:
     """Normalize, fingerprint and classify every failure."""
@@ -505,12 +559,26 @@ Critical evidence rules:
 6. Prioritize systemic issues with larger blast radius when evidence supports it.
 7. If evidence is insufficient, explicitly say "Insufficient evidence".
 8. Suggested fixes must be concrete but must not claim knowledge of unavailable code.
-9. Use only these categories:
-   ui-locator, timeout, api-contract, concurrency, null-safety, bounds-check,
-   logic-bug, flaky, environment, build, infrastructure, assertion, unknown
-10. Severity must be one of: Critical, High, Medium, Low.
-11. Confidence must be one of: High, Medium, Low.
-12. Release recommendation must be one of: GO, CONDITIONAL_GO, HOLD, NO_GO.
+9. Use ONLY one of these five final categories, with exact spelling:
+   - Application Defect
+   - Environment Issue
+   - Test Data Issue
+   - Script Defect
+   - Unknown
+10. Classification guidance:
+   - Application Defect: evidence points to application behavior, business logic,
+     backend/API behavior, application exceptions, or product defects.
+   - Environment Issue: CI infrastructure, network, service availability,
+     configuration, dependency, runtime, agent, container, or platform issues.
+   - Test Data Issue: missing, invalid, inconsistent, duplicate, fixture, seed,
+     dataset, or prerequisite data problems.
+   - Script Defect: test automation implementation, locator, selector, page object,
+     synchronization explicitly caused by test code, or automation logic issues.
+   - Unknown: evidence is insufficient or the failure is genuinely ambiguous.
+11. Do not force a failure into a category when evidence is weak; use Unknown.
+12. Severity must be one of: Critical, High, Medium, Low.
+13. Confidence must be one of: High, Medium, Low.
+14. Release recommendation must be one of: GO, CONDITIONAL_GO, HOLD, NO_GO.
 
 Return this schema:
 {
@@ -979,13 +1047,17 @@ def generate_html_dashboard(
     analysis: Dict[str, Any],
     risk: Dict[str, Any],
 ) -> str:
-    category_counts = Counter(
-        safe(item.get("category"), "unknown")
-        for item in (analysis.get("detailed_findings") or [])
-    )
+    # Always initialize the exact five approved categories. This prevents
+    # internal/legacy labels from ever appearing in the dashboard.
+    category_counts = Counter({category: 0 for category in CATEGORIES})
 
-    if not category_counts:
-        category_counts = Counter(f.rule_category for f in failures)
+    findings_for_categories = analysis.get("detailed_findings") or []
+    if findings_for_categories:
+        for item in findings_for_categories:
+            category_counts[normalize_category(item.get("category"))] += 1
+    else:
+        for failure in failures:
+            category_counts[normalize_category(failure.rule_category)] += 1
 
     severity_counts = Counter(
         safe(item.get("severity"), "Low")
@@ -1783,6 +1855,9 @@ def main():
         clusters=clusters,
         console_log=console_log,
     )
+
+    # Final report-boundary guardrail: expose ONLY the five approved categories.
+    analysis = enforce_category_taxonomy(analysis)
 
     # --------------------------------------------------------
     # STEP 5: RISK ASSESSMENT
