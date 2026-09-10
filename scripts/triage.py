@@ -885,7 +885,7 @@ def assess_risk(
         "risk_level": risk_level,
         "reason": safe(
             release.get("reason"),
-            "Release assessment is based on failure severity, confidence and correlated impact.",
+            "Release assessment is based on failure severity and correlated impact.",
         ),
         "highest_severity": highest_severity,
         "affected_failures": len(findings),
@@ -934,7 +934,6 @@ def generate_markdown_report(
                 lines.extend([
                     f"#### {finding['test_name']}",
                     f"- **Severity:** {finding['severity']}",
-                    f"- **Confidence:** {finding['confidence']}",
                     f"- **Root Cause:** {finding['root_cause']}",
                     f"- **Suggested Fix:** {finding['suggested_fix']}",
                     "",
@@ -978,9 +977,6 @@ CSS = r"""
 def severity_css_class(value: Any) -> str:
     return "sev-" + str(value or "low").strip().lower().replace(" ", "-")
 
-
-def confidence_css_class(value: Any) -> str:
-    return "conf-" + str(value or "low").strip().lower().replace(" ", "-")
 
 
 def info_card_html(label: str, value: Any, full: bool = False, extra: str = "") -> str:
@@ -1037,16 +1033,10 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
     )
 
     def render_detail(finding: Dict[str, Any]) -> str:
-        duration = finding.get("duration_ms")
-        duration_text = (
-            f'{float(duration)/1000:.2f} s'
-            if duration not in (None, "") else "Not available"
-        )
         related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
         snapshot_cards = [
             info_card_html("Status", finding.get("status")),
             info_card_html("Severity", finding.get("severity")),
-            info_card_html("Confidence", finding.get("confidence")),
         ]
         if finding.get("module"):
             snapshot_cards.append(info_card_html("Module", finding.get("module")))
@@ -1054,8 +1044,6 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
             snapshot_cards.append(info_card_html("Suite", finding.get("suite")))
         if finding.get("exception_type"):
             snapshot_cards.append(info_card_html("Exception", finding.get("exception_type")))
-        if duration_text != "Not available":
-            snapshot_cards.append(info_card_html("Duration", duration_text))
         if finding.get("feature"):
             snapshot_cards.append(info_card_html("Feature / Story", finding.get("feature")))
         if related_count:
@@ -1084,8 +1072,6 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
             f'{info_card_html("Root Cause Analysis", finding.get("root_cause"), True, "analysis")}'
             f'{info_card_html("Suggested Fix", finding.get("suggested_fix"), True, "analysis")}'
             f'{info_card_html("Evidence", finding.get("evidence"), True, "analysis")}'
-            f'{info_card_html("Recommended Action", finding.get("recommended_action"), True, "analysis")}'
-            f'{info_card_html("Suggested Owner", finding.get("suggested_owner"), False, "analysis-owner")}'
             f'</div>{tech}'
             f'</div>'
         )
@@ -1114,7 +1100,6 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
             f'</span>'
             f'<span class="test-side">'
             f'<span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))}</span>'
-            f'<span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))}</span>'
             f'</span>'
             f'</summary>'
             f'{render_detail(finding)}'
