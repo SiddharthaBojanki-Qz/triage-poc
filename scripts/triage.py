@@ -125,8 +125,8 @@ class Failure:
     message: str
     trace: str
     module: str = "Unknown"
-    suite: str = "Unknown"
-    feature: str = "Unknown"
+    suite: str = ""
+    feature: str = ""
     duration_ms: int = 0
     test_id: str = ""
     history_id: str = ""
@@ -268,8 +268,13 @@ def extract_suite(result: Dict[str, Any]) -> str:
 
 
 def extract_feature(result: Dict[str, Any]) -> str:
+    """Return a real Allure feature/story when one exists; otherwise keep it absent."""
     labels = labels_map(result)
-    return first_label(labels, "feature", "epic", "story")
+    for name in ("feature", "story", "epic"):
+        values = labels.get(name) or []
+        if values and values[0].strip():
+            return values[0].strip()
+    return ""
 
 
 def summarize_allure_results(
@@ -333,7 +338,16 @@ def fetch_console_log(build_url: str, max_lines: int = MAX_CONSOLE_LINES) -> str
             text = response.read().decode("utf-8", errors="replace")
         return "\n".join(text.splitlines()[-max_lines:])
     except Exception as exc:
-        print(f"Warning: unable to fetch Jenkins console log: {exc}", file=sys.stderr)
+        detail = str(exc)
+        if "403" in detail:
+            print(
+                "Warning: Jenkins console log access returned HTTP 403. "
+                "Set JENKINS_USER and JENKINS_API_TOKEN (or Jenkins credentials "
+                "binding) if console-log context is required. Continuing without it.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Warning: unable to fetch Jenkins console log: {exc}", file=sys.stderr)
         return ""
 
 
@@ -648,7 +662,7 @@ def default_finding(failure: Failure, cluster: Optional[FailureCluster] = None) 
     )
     return {
         "test_name": failure.name,
-        "cluster_id": cluster.cluster_id if cluster else "CL-01",
+        "cluster_id": cluster.cluster_id if cluster else "",
         "category": normalize_category(failure.rule_category),
         "severity": severity,
         "confidence": "Low",
@@ -773,6 +787,11 @@ def build_validated_findings(
             "fingerprint": failure.fingerprint,
             "duplicate_count": failure.duplicate_count,
             "cluster_id": safe(ai.get("cluster_id"), base["cluster_id"]),
+            "failure_pattern": (
+                cluster.probable_pattern
+                if cluster is not None and cluster.probable_pattern
+                else "Individual failure pattern"
+            ),
             "category": normalize_category(ai.get("category", base["category"])),
             "severity": normalize_severity(ai.get("severity", base["severity"]), base["severity"]),
             "confidence": normalize_confidence(ai.get("confidence", base["confidence"]), base["confidence"]),
@@ -890,6 +909,17 @@ def generate_markdown_report(
     return "\n".join(lines)
 
 
+
+def finding_category_map(findings: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group validated findings by the five approved user-facing categories."""
+    grouped: Dict[str, List[Dict[str, Any]]] = {category: [] for category in CATEGORIES}
+    for finding in findings:
+        category = normalize_category(finding.get("category"))
+        finding["category"] = category
+        grouped[category].append(finding)
+    return grouped
+
+
 # ============================================================
 # 11. INTERACTIVE HTML DASHBOARD
 # ============================================================
@@ -904,7 +934,7 @@ CSS = r"""
 .failure-workspace{display:grid;grid-template-columns:250px 330px minmax(0,1fr);gap:12px;height:calc(100vh - 235px);min-height:560px}.pane{background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;min-width:0;position:relative}.pane-header{height:58px;padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}.pane-title{font-size:13px;font-weight:900;color:var(--strong)}.pane-count{font-size:10px;color:var(--muted);font-weight:800}.pane-body{height:calc(100% - 58px);overflow:auto;padding:8px}
 .category-option,.test-option{display:block;text-decoration:none}.category-card{position:relative;display:block;border:1px solid transparent;border-radius:10px;padding:12px 12px 12px 14px;margin-bottom:6px;background:#fff;cursor:pointer;transition:.15s}.category-card:hover{background:var(--surface2);border-color:var(--border)}.category-card::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:4px;background:var(--primary)}.category-card-title{font-size:12px;color:var(--strong);font-weight:900;line-height:1.25}.category-card-count{display:flex;align-items:baseline;gap:5px;margin-top:7px}.category-card-count strong{font-size:25px;font-weight:900;color:var(--strong)}.category-card-count span{font-size:10px;color:var(--muted)}
 .test-panel{display:none;height:100%}.empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--muted);padding:30px;font-size:12px}.test-option{padding:0;margin-bottom:5px}.test-row{border:1px solid transparent;border-radius:10px;background:#fff;padding:11px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}.test-row:hover{background:var(--surface2);border-color:var(--border)}.test-row-main{min-width:0}.test-name{font-size:12px;font-weight:900;color:var(--strong);overflow-wrap:anywhere}.test-secondary{margin-top:4px;display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:9px}.test-side{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:900;white-space:nowrap}.sev-critical,.sev-high{color:var(--danger);background:var(--dangerSoft)}.sev-medium{color:var(--warning);background:var(--warningSoft)}.sev-low{color:var(--success);background:var(--successSoft)}.conf-high{color:var(--primaryDark);background:var(--primarySoft)}.conf-medium{color:#5e4db2;background:#f1eeff}.conf-low{color:var(--muted);background:var(--surface2)}
-.detail-panel,.detail-placeholder{display:none}.detail-head{height:112px;padding:16px 18px;border-bottom:1px solid var(--border);background:#fcfdfe}.detail-title{font-size:19px;line-height:1.25;color:var(--strong);font-weight:900;overflow-wrap:anywhere;margin-top:5px}.detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.detail-body{height:calc(100% - 112px);overflow:auto;padding:14px 16px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.info-card{border:1px solid var(--border);border-radius:10px;background:var(--surface2);padding:11px}.info-card.full{grid-column:1/-1}.info-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px}.info-value{font-size:12px;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden}.disclosure summary{cursor:pointer;padding:9px 11px;font-size:10px;font-weight:900;color:var(--strong);background:#fff}.disclosure .tech-block{border-top:1px solid var(--border);padding:11px;background:var(--surface2)}.disclosure pre{margin:8px 0 0;padding:11px;border-radius:8px;background:#172b4d;color:#f7f8fa;max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.tech-label{margin-top:10px}.footer{color:var(--muted);text-align:center;font-size:11px;margin-top:16px}
+.detail-panel,.detail-placeholder{display:none}.detail-head{height:112px;padding:16px 18px;border-bottom:1px solid var(--border);background:#fcfdfe}.detail-title{font-size:19px;line-height:1.25;color:var(--strong);font-weight:900;overflow-wrap:anywhere;margin-top:5px}.detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.detail-body{height:calc(100% - 112px);overflow:auto;padding:14px 16px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.info-card{border:1px solid var(--border);border-radius:10px;background:var(--surface2);padding:11px}.info-card.full{grid-column:1/-1}.failure-pattern{border:1px solid var(--border);border-radius:10px;background:#fff;padding:11px;margin-bottom:10px}.pattern-text{display:block;color:var(--strong);font-size:12px;font-weight:800}.info-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px}.info-value{font-size:12px;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden}.disclosure summary{cursor:pointer;padding:9px 11px;font-size:10px;font-weight:900;color:var(--strong);background:#fff}.disclosure .tech-block{border-top:1px solid var(--border);padding:11px;background:var(--surface2)}.disclosure pre{margin:8px 0 0;padding:11px;border-radius:8px;background:#172b4d;color:#f7f8fa;max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.tech-label{margin-top:10px}.footer{color:var(--muted);text-align:center;font-size:11px;margin-top:16px}
 .cat-radio,.test-radio{position:absolute;opacity:0;pointer-events:none}.test-pane .panel-app,.test-pane .panel-env,.test-pane .panel-data,.test-pane .panel-script,.test-pane .panel-unknown{display:none}.workspace .detail-placeholder{display:grid}
 #cat-app:checked~.workspace .panel-app,#cat-env:checked~.workspace .panel-env,#cat-data:checked~.workspace .panel-data,#cat-script:checked~.workspace .panel-script,#cat-unknown:checked~.workspace .panel-unknown{display:block}
 #cat-app:checked~.workspace .cat-app,#cat-env:checked~.workspace .cat-env,#cat-data:checked~.workspace .cat-data,#cat-script:checked~.workspace .cat-script,#cat-unknown:checked~.workspace .cat-unknown{background:var(--primarySoft);border-color:#b7c9e8}
@@ -997,9 +1027,10 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
 
     def render_test_row(tid: str, finding: Dict[str, Any]) -> str:
         module = finding.get("module") or finding.get("suite") or "Unknown"
+        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
         related = (
-            f'<span>•</span><span>{finding.get("duplicate_count", 1)} related</span>'
-            if finding.get("duplicate_count", 1) > 1 else ""
+            f'<span>•</span><span>{related_count} similar test{"s" if related_count != 1 else ""}</span>'
+            if related_count else ""
         )
         return (
             f'<label class="test-option" for="{tid}">'
@@ -1042,21 +1073,35 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
             f'{float(duration)/1000:.2f} s'
             if duration not in (None, "") else "Not available"
         )
-        cards = [
+        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
+        info_cards = [
             info_card_html("Status", finding.get("status")),
+            info_card_html("Category", finding.get("category")),
+            info_card_html("Severity", finding.get("severity")),
+            info_card_html("Confidence", finding.get("confidence")),
             info_card_html("Module", finding.get("module")),
             info_card_html("Suite", finding.get("suite")),
-            info_card_html("Feature", finding.get("feature")),
             info_card_html("Duration", duration_text),
             info_card_html("Exception", finding.get("exception_type")),
-            info_card_html("Category", finding.get("category")),
-            info_card_html("Related Failures", str(finding.get("duplicate_count", 1))),
+        ]
+        if finding.get("feature"):
+            info_cards.insert(6, info_card_html("Feature / Story", finding.get("feature")))
+        if related_count:
+            info_cards.append(
+                info_card_html(
+                    "Related Tests",
+                    f"{related_count} other test{"s" if related_count != 1 else ""} show the same failure pattern",
+                    True,
+                )
+            )
+        info_cards.extend([
             info_card_html("Root Cause Analysis", finding.get("root_cause"), True),
             info_card_html("Suggested Fix", finding.get("suggested_fix"), True),
             info_card_html("Recommended Action", finding.get("recommended_action"), True),
             info_card_html("Evidence", finding.get("evidence"), True, "evidence"),
             info_card_html("Suggested Owner", finding.get("suggested_owner")),
-        ]
+        ])
+        cards = info_cards
         tech = (
             '<details class="disclosure"><summary>Technical failure evidence</summary>'
             '<div class="tech-block">'
@@ -1075,7 +1120,12 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
             f'<span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))} severity</span>'
             f'<span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span>'
             f'</div></div>'
-            f'<div class="detail-body"><div class="detail-grid">{"".join(cards)}</div>{tech}</div>'
+            f'<div class="detail-body">'
+            f'<div class="failure-pattern">'
+            f'<span class="info-label">Failure Pattern</span>'
+            f'<span class="pattern-text">{html_escape(finding.get("failure_pattern") or "Individual failure")}</span>'
+            f'</div>'
+            f'<div class="detail-grid">{"".join(cards)}</div>{tech}</div>'
             f'</div>'
         )
 
