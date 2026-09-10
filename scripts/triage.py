@@ -967,12 +967,11 @@ CSS = r"""
 .analysis-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:12px}.analysis-title{font-size:18px;line-height:1.2;color:var(--strong);font-weight:800;letter-spacing:-.03em}.analysis-subtitle{font-size:11px;color:var(--muted);margin-top:3px}.analysis-hint{font-size:10.5px;color:var(--faint);text-align:right}
 .category-workspace{margin-top:0}.category-bar{background:rgba(255,255,255,.88);border:1px solid var(--border);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:var(--shadow);overflow:hidden}.category-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));width:100%}.category-option{display:block;text-decoration:none;min-width:0;border-right:1px solid var(--border)}.category-option:last-child{border-right:0}.category-card{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:15px 16px 14px;min-height:62px;background:#fff;cursor:pointer;white-space:nowrap;transition:background .16s ease,box-shadow .16s ease}.category-card:hover{background:#fbfcfe}.category-card:after{content:"";position:absolute;left:16px;right:16px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:transparent;transition:background .16s ease}.category-card-title{font-size:11.5px;color:#44536b;font-weight:800;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.015em}.category-card-count{display:inline-flex;align-items:center;justify-content:center;min-width:25px;height:23px;padding:0 7px;border-radius:7px;background:#f3f5f8;border:1px solid #e5e9ef;font-size:10px;font-weight:800;color:#6d7b90;flex:0 0 auto}.cat-radio:focus-visible~.category-bar{outline:3px solid rgba(31,95,191,.15);outline-offset:2px}
 #cat-app:checked~.category-bar .tab-app,#cat-env:checked~.category-bar .tab-env,#cat-data:checked~.category-bar .tab-data,#cat-script:checked~.category-bar .tab-script,#cat-unknown:checked~.category-bar .tab-unknown{background:#fff;box-shadow:0 1px 0 #fff inset}.cat-radio:checked~.category-bar .category-card:after{background:transparent}#cat-app:checked~.category-bar .tab-app:after,#cat-env:checked~.category-bar .tab-env:after,#cat-data:checked~.category-bar .tab-data:after,#cat-script:checked~.category-bar .tab-script:after,#cat-unknown:checked~.category-bar .tab-unknown:after{background:var(--primary)}#cat-app:checked~.category-bar .tab-app .category-card-title,#cat-env:checked~.category-bar .tab-env .category-card-title,#cat-data:checked~.category-bar .tab-data .category-card-title,#cat-script:checked~.category-bar .tab-script .category-card-title,#cat-unknown:checked~.category-bar .tab-unknown .category-card-title{color:var(--strong)}#cat-app:checked~.category-bar .tab-app .category-card-count,#cat-env:checked~.category-bar .tab-env .category-card-count,#cat-data:checked~.category-bar .tab-data .category-card-count,#cat-script:checked~.category-bar .tab-script .category-card-count,#cat-unknown:checked~.category-bar .tab-unknown .category-card-count{background:var(--primary-soft);border-color:#d6e4f7;color:var(--primary-dark)}
-.failures-section{background:#fff;border:1px solid var(--border);border-top:0;border-radius:0 0 14px 14px;box-shadow:var(--shadow);padding:18px 18px 20px}.category-panel{display:none}.category-panel-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:3px 2px 14px;margin-bottom:10px;border-bottom:1px solid var(--border)}.category-panel-title{font-size:17px;line-height:1.2;font-weight:800;color:var(--strong);letter-spacing:-.025em}.category-panel-count{font-size:10.5px;color:var(--muted);font-weight:700}.test-list{display:flex;flex-direction:column;gap:7px}.test-item{border:1px solid var(--border);border-radius:11px;background:#fff;overflow:hidden;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.test-item:hover{border-color:#c8d5e6;box-shadow:0 4px 14px rgba(16,33,59,.05)}.test-item[open]{border-color:#b9cae1;box-shadow:var(--shadow-open)}.test-summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 16px;cursor:pointer}.test-summary::-webkit-details-marker{display:none}.test-summary:before{content:"";width:7px;height:7px;border-right:2px solid #7f8b9d;border-bottom:2px solid #7f8b9d;transform:rotate(-45deg);flex:0 0 auto;transition:transform .16s ease,border-color .16s ease;margin-left:1px}.test-item[open]>.test-summary:before{transform:rotate(45deg);border-color:var(--primary)}.test-main{min-width:0;flex:1}.test-name{display:block;font-size:13px;line-height:1.45;font-weight:800;color:var(--strong);overflow-wrap:anywhere}.test-secondary{margin-top:5px;display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:10.5px}.test-secondary span:nth-child(even){color:#b6beca}.test-side{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:6px;font-size:9.5px;font-weight:800;white-space:nowrap;border:1px solid transparent}.sev-critical,.sev-high{color:var(--danger);background:var(--danger-soft);border-color:#f5d1d1}.sev-medium{color:var(--warning);background:var(--warning-soft);border-color:#f1dfbf}.sev-low{color:var(--success);background:var(--success-soft);border-color:#d1e9dc}.conf-high{color:var(--primary-dark);background:var(--primary-soft);border-color:#d6e4f7}.conf-medium{color:#5f55a3;background:#f3f1fd;border-color:#ded9f6}.conf-low{color:var(--muted);background:#f6f7f9;border-color:#e6e9ee}
-.test-detail{border-top:1px solid var(--border);padding:14px 18px 16px;background:#fbfcfe}.analysis-block{padding:10px 0 13px;border-bottom:1px solid var(--border)}.analysis-block:last-of-type{border-bottom:0}.section-title{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;color:var(--muted);margin-bottom:6px}.section-copy{font-size:12px;line-height:1.68;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.info-label{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:6px}.info-value{font-size:11px;line-height:1.6;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:10px;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:#fff}.disclosure summary{cursor:pointer;padding:10px 12px;font-size:10px;font-weight:800;color:var(--strong);background:#fff}.disclosure summary:hover{background:#f7f9fc}.disclosure .tech-block{border-top:1px solid var(--border);padding:12px;background:#f7f8fa}.tech-section+.tech-section{margin-top:12px}.disclosure pre{margin:7px 0 0;padding:11px;border-radius:7px;background:#18283f;color:#eef3f8;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
-.empty{padding:48px 20px;text-align:center;color:var(--muted);font-size:11.5px}.footer{color:var(--faint);text-align:center;font-size:9.5px;margin-top:18px}
+.failures-section{background:#fff;border:1px solid var(--border);border-top:0;border-radius:0 0 14px 14px;box-shadow:var(--shadow);padding:18px 18px 20px}.category-panel{display:none}.category-panel-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:3px 2px 14px;margin-bottom:10px;border-bottom:1px solid var(--border)}.category-panel-title{font-size:17px;line-height:1.2;font-weight:800;color:var(--strong);letter-spacing:-.025em}.category-panel-count{font-size:10.5px;color:var(--muted);font-weight:700}.test-list{display:flex;flex-direction:column;gap:7px}.test-item{border:1px solid var(--border);border-radius:11px;background:#fff;overflow:hidden;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.test-item:hover{border-color:#c8d5e6;box-shadow:0 4px 14px rgba(16,33,59,.05)}.test-item[open]{border-color:#b9cae1;box-shadow:var(--shadow-open)}.test-summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 16px;cursor:pointer}.test-summary::-webkit-details-marker{display:none}.test-summary:before{content:"";width:7px;height:7px;border-right:2px solid #7f8b9d;border-bottom:2px solid #7f8b9d;transform:rotate(-45deg);flex:0 0 auto;transition:transform .16s ease,border-color .16s ease;margin-left:1px}.test-item[open]>.test-summary:before{transform:rotate(45deg);border-color:var(--primary)}.test-main{min-width:0;flex:1}.test-name{display:block;font-size:13.5px;line-height:1.45;font-weight:800;color:var(--strong);overflow-wrap:anywhere}.test-secondary{margin-top:5px;display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:10.5px}.test-secondary span:nth-child(even){color:#b6beca}.test-side{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;font-size:9.5px;font-weight:800;white-space:nowrap;border:1px solid transparent}.sev-critical,.sev-high{color:var(--danger);background:var(--danger-soft);border-color:#f5d1d1}.sev-medium{color:var(--warning);background:var(--warning-soft);border-color:#f1dfbf}.sev-low{color:var(--success);background:var(--success-soft);border-color:#d1e9dc}.conf-high{color:var(--primary-dark);background:var(--primary-soft);border-color:#d6e4f7}.conf-medium{color:#5f55a3;background:#f3f1fd;border-color:#ded9f6}.conf-low{color:var(--muted);background:#f6f7f9;border-color:#e6e9ee}
+.test-detail{border-top:1px solid var(--border);padding:18px 20px 20px;background:linear-gradient(180deg,#fbfcfe,#f9fbfd)}.failure-pattern{border:1px solid #dbe3ee;border-radius:10px;background:#fff;padding:13px 14px 14px;margin-bottom:12px}.failure-pattern .info-label{margin-bottom:6px}.pattern-text{display:block;color:var(--strong);font-size:12.5px;font-weight:700;line-height:1.55}.detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.snapshot-grid{margin-bottom:14px}.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.analysis-grid .analysis-owner{align-self:start}.info-card{border:1px solid var(--border);border-radius:10px;background:#fff;padding:13px 14px}.info-card.full{grid-column:1/-1}.snapshot-grid .info-card{padding:11px 12px;background:#fbfcfe}.snapshot-heading{font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}.analysis-grid .info-card{padding:15px 16px}.analysis-grid .analysis{background:#fff}.analysis-grid .analysis .info-label{color:var(--primary-dark)}.info-label{font-size:8.75px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--muted);margin-bottom:6px}.info-value{font-size:12.5px;line-height:1.65;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}.disclosure summary{cursor:pointer;padding:12px 14px;font-size:10.5px;font-weight:800;color:var(--strong);background:#fff}.disclosure summary:hover{background:#fbfcfe}.disclosure .tech-block{border-top:1px solid var(--border);padding:13px 14px;background:#f7f8fa}.disclosure pre{margin:8px 0 0;padding:12px;border-radius:8px;background:#18283f;color:#eef3f8;max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.tech-label{margin-top:12px}.empty{padding:48px 20px;text-align:center;color:var(--muted);font-size:11.5px}.footer{color:var(--faint);text-align:center;font-size:9.5px;margin-top:18px}
 .cat-radio{position:absolute;opacity:0;pointer-events:none}#cat-app:checked~.failures-section .panel-app,#cat-env:checked~.failures-section .panel-env,#cat-data:checked~.failures-section .panel-data,#cat-script:checked~.failures-section .panel-script,#cat-unknown:checked~.failures-section .panel-unknown{display:block}
 @media (max-width:900px){.container{padding:22px 16px 30px}.topbar-inner{padding:0 16px}.category-card{padding-left:12px;padding-right:12px}.category-card-title{font-size:10.5px}.analysis-hint{display:none}}
-@media (max-width:700px){.container{padding:16px 10px 24px}.topbar{height:60px}.brand-sub{display:none}.stats{grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:22px}.stat{min-height:78px;padding:14px}.stat-value{font-size:24px}.hero{flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:16px}h1{font-size:26px}.category-bar{overflow-x:auto}.category-tabs{grid-template-columns:repeat(5,minmax(170px,1fr));min-width:850px}.failures-section{padding:14px}.category-panel-header{align-items:flex-start;flex-direction:column;gap:4px}.test-summary{align-items:flex-start}.test-side{justify-content:flex-start}.detail-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.release{align-items:flex-start;flex-direction:column}.risk-pill{align-self:flex-start}}
+@media (max-width:700px){.container{padding:16px 10px 24px}.topbar{height:60px}.brand-sub{display:none}.stats{grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:22px}.stat{min-height:78px;padding:14px}.stat-value{font-size:24px}.hero{flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:16px}h1{font-size:26px}.category-bar{overflow-x:auto}.category-tabs{grid-template-columns:repeat(5,minmax(170px,1fr));min-width:850px}.failures-section{padding:14px}.category-panel-header{align-items:flex-start;flex-direction:column;gap:4px}.test-summary{align-items:flex-start}.test-side{justify-content:flex-start}.detail-grid{grid-template-columns:1fr}.analysis-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.release{align-items:flex-start;flex-direction:column}.risk-pill{align-self:flex-start}}
 @media print{.category-panel{display:block!important}.category-bar{box-shadow:none}.failures-section{box-shadow:none}.test-item{break-inside:avoid}}
 """
 
@@ -1038,35 +1037,81 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
     )
 
     def render_detail(finding: Dict[str, Any]) -> str:
-        root_cause = finding.get("root_cause") or "Root cause could not be determined from the available evidence."
-        suggested_fix = finding.get("suggested_fix") or "No specific fix was identified from the available evidence."
-        failure_message = finding.get("failure_message") or "No failure message available."
-        stack_trace = finding.get("stack_trace") or "No stack trace available."
+        duration = finding.get("duration_ms")
+        duration_text = (
+            f'{float(duration)/1000:.2f} s'
+            if duration not in (None, "") else "Not available"
+        )
+        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
+        snapshot_cards = [
+            info_card_html("Status", finding.get("status")),
+            info_card_html("Severity", finding.get("severity")),
+            info_card_html("Confidence", finding.get("confidence")),
+        ]
+        if finding.get("module"):
+            snapshot_cards.append(info_card_html("Module", finding.get("module")))
+        if finding.get("suite"):
+            snapshot_cards.append(info_card_html("Suite", finding.get("suite")))
+        if finding.get("exception_type"):
+            snapshot_cards.append(info_card_html("Exception", finding.get("exception_type")))
+        if duration_text != "Not available":
+            snapshot_cards.append(info_card_html("Duration", duration_text))
+        if finding.get("feature"):
+            snapshot_cards.append(info_card_html("Feature / Story", finding.get("feature")))
+        if related_count:
+            snapshot_cards.append(
+                info_card_html(
+                    "Related Tests",
+                    f'{related_count} other test{"s" if related_count != 1 else ""} show the same failure pattern',
+                    True,
+                )
+            )
 
         tech = (
             '<details class="disclosure"><summary>View technical error details</summary>'
             '<div class="tech-block">'
             '<div class="tech-section"><div class="info-label">Failure message</div>'
-            f'<div class="info-value trace">{html_escape(failure_message)}</div></div>'
+            f'<div class="info-value trace">{html_escape(finding.get("failure_message") or "No failure message available.")}</div></div>'
             '<div class="tech-section"><div class="info-label">Stack trace</div>'
-            f'<pre>{html_escape(stack_trace)}</pre></div>'
+            f'<pre>{html_escape(finding.get("stack_trace") or "No stack trace available.")}</pre></div>'
             '</div></details>'
         )
         return (
             f'<div class="test-detail">'
-            f'<div class="analysis-block"><div class="section-title">Root cause analysis</div>'
-            f'<div class="section-copy">{html_escape(root_cause)}</div></div>'
-            f'<div class="analysis-block"><div class="section-title">Suggested fix</div>'
-            f'<div class="section-copy">{html_escape(suggested_fix)}</div></div>'
-            f'{tech}'
+            f'<div class="snapshot-heading">Test snapshot</div>'
+            f'<div class="detail-grid snapshot-grid">{"".join(snapshot_cards)}</div>'
+            f'<div class="analysis-grid">'
+            f'{info_card_html("Root Cause Analysis", finding.get("root_cause"), True, "analysis")}'
+            f'{info_card_html("Suggested Fix", finding.get("suggested_fix"), True, "analysis")}'
+            f'{info_card_html("Evidence", finding.get("evidence"), True, "analysis")}'
+            f'{info_card_html("Recommended Action", finding.get("recommended_action"), True, "analysis")}'
+            f'{info_card_html("Suggested Owner", finding.get("suggested_owner"), False, "analysis-owner")}'
+            f'</div>{tech}'
             f'</div>'
         )
 
     def render_test_item(finding: Dict[str, Any]) -> str:
+        module = finding.get("module") or finding.get("suite")
+        secondary = []
+        if module:
+            secondary.append(html_escape(module))
+        if finding.get("exception_type"):
+            secondary.append(html_escape(finding.get("exception_type")))
+        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
+        if related_count:
+            secondary.append(f'{related_count} similar test{"s" if related_count != 1 else ""}')
+        secondary_html = "".join(
+            f'<span>{item}</span><span>•</span>' for item in secondary[:-1]
+        )
+        if secondary:
+            secondary_html += f'<span>{secondary[-1]}</span>'
         return (
             f'<details class="test-item">'
             f'<summary class="test-summary">'
-            f'<span class="test-main"><span class="test-name">{html_escape(finding.get("test_name"))}</span></span>'
+            f'<span class="test-main">'
+            f'<span class="test-name">{html_escape(finding.get("test_name"))}</span>'
+            f'<span class="test-secondary">{secondary_html}</span>'
+            f'</span>'
             f'<span class="test-side">'
             f'<span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))}</span>'
             f'<span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))}</span>'
