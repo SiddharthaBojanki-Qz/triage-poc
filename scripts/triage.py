@@ -896,473 +896,131 @@ def generate_markdown_report(
 
 CSS = r"""
 :root {
-  --bg: #F6F7F9;
-  --surface: #FFFFFF;
-  --surface-soft: #F9FAFB;
-  --text: #172B4D;
-  --text-strong: #0F1F3D;
-  --muted: #5E6C84;
-  --border: #DFE1E6;
-  --primary: #0C66E4;
-  --primary-dark: #0747A6;
-  --primary-soft: #E9F2FF;
-  --danger: #AE2E24;
-  --danger-soft: #FFEBE9;
-  --warning: #974F0C;
-  --warning-soft: #FFF4E5;
-  --success: #216E4E;
-  --success-soft: #DCFFF1;
-  --shadow: 0 6px 20px rgba(9, 30, 66, .06);
-  --shadow-hover: 0 12px 28px rgba(9, 30, 66, .10);
-  --radius: 14px;
+  --bg:#F7F8FA; --surface:#FFFFFF; --surface-2:#F4F5F7; --text:#172B4D; --text-strong:#0F1F3D;
+  --muted:#5E6C84; --muted-2:#7A869A; --border:#DFE1E6; --primary:#0C66E4; --primary-dark:#0747A6;
+  --primary-soft:#E9F2FF; --danger:#AE2E24; --danger-soft:#FFEBE9; --warning:#974F0C; --warning-soft:#FFF4E5;
+  --success:#216E4E; --success-soft:#DCFFF1; --shadow:0 8px 24px rgba(9,30,66,.06); --shadow-hover:0 12px 28px rgba(9,30,66,.10);
+  --radius:14px;
 }
-
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; background: var(--bg); }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-  line-height: 1.52;
-  -webkit-font-smoothing: antialiased;
-}
-button, input { font: inherit; }
-button { cursor: pointer; }
-
-.topbar {
-  background: rgba(255,255,255,.97);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  backdrop-filter: blur(10px);
-}
-.topbar-inner {
-  max-width: 1160px;
-  margin: 0 auto;
-  padding: 13px 22px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-.brand { display: flex; align-items: center; gap: 11px; }
-.brand-mark {
-  width: 36px; height: 36px; border-radius: 10px;
-  background: var(--primary); color: #fff;
-  display: grid; place-items: center; font-weight: 900;
-}
-.brand-title { font-weight: 900; font-size: 15px; color: var(--text-strong); }
-.brand-sub { color: var(--muted); font-size: 11px; }
-.status {
-  padding: 6px 11px; border-radius: 999px;
-  font-size: 11px; font-weight: 900;
-  background: var(--surface-soft); color: var(--muted);
-  border: 1px solid var(--border);
-}
-.status.success { color: var(--success); background: var(--success-soft); }
-.status.failure { color: var(--danger); background: var(--danger-soft); }
-
-.container { max-width: 1160px; margin: 0 auto; padding: 28px 22px 54px; }
-.hero {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 20px; margin-bottom: 18px;
-}
-.eyebrow {
-  color: var(--muted); text-transform: uppercase;
-  letter-spacing: .10em; font-size: 10px; font-weight: 900;
-}
-h1 {
-  margin: 4px 0 4px; color: var(--text-strong);
-  font-size: 30px; line-height: 1.15; font-weight: 900; letter-spacing: -.03em;
-}
-.hero-meta { color: var(--muted); font-size: 12px; }
-.hero-meta a { color: var(--primary); text-decoration: none; font-weight: 700; }
-.hero-meta a:hover { text-decoration: underline; }
-
-.release {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 15px 18px; display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; box-shadow: var(--shadow); margin-bottom: 20px;
-}
-.release-main { display: flex; align-items: center; gap: 12px; }
-.release-icon {
-  width: 38px; height: 38px; border-radius: 11px;
-  display: grid; place-items: center; font-weight: 900; background: var(--surface-soft);
-}
-.release.go { border-left: 4px solid var(--success); }
-.release.conditional-go { border-left: 4px solid var(--warning); }
-.release.hold, .release.no-go { border-left: 4px solid var(--danger); }
-.release-title { color: var(--text-strong); font-weight: 900; font-size: 13px; }
-.release-reason { color: var(--muted); font-size: 11px; margin-top: 2px; }
-.risk-pill {
-  padding: 6px 10px; border-radius: 999px; background: var(--surface-soft);
-  border: 1px solid var(--border); color: var(--text); font-size: 11px; font-weight: 900;
-  white-space: nowrap;
-}
-
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; margin-bottom: 24px; }
-.stat {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 14px 16px; box-shadow: var(--shadow);
-}
-.stat-value { font-size: 24px; font-weight: 900; letter-spacing: -.035em; color: var(--text-strong); }
-.stat-label {
-  color: var(--muted); font-size: 10px; text-transform: uppercase;
-  letter-spacing: .08em; font-weight: 900; margin-top: 2px;
-}
-
-.section-title { margin: 0 0 4px; font-size: 19px; color: var(--text-strong); font-weight: 900; letter-spacing: -.02em; }
-.section-subtitle { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
-.category-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; }
-.category-card {
-  appearance: none; border: 1px solid var(--border); background: var(--surface);
-  color: var(--text); border-radius: 13px; padding: 16px; min-height: 128px;
-  text-align: left; box-shadow: var(--shadow); transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
-}
-.category-card:hover { transform: translateY(-2px); border-color: #B7C9E8; box-shadow: var(--shadow-hover); }
-.category-card.active { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-.category-name { font-weight: 800; font-size: 13px; min-height: 38px; color: var(--text-strong); }
-.category-count { font-size: 32px; font-weight: 900; line-height: 1; letter-spacing: -.05em; margin-top: 8px; color: var(--text-strong); }
-.category-label { color: var(--muted); font-size: 10px; margin-top: 4px; }
-.category-accent { height: 3px; width: 28px; border-radius: 999px; background: var(--primary); margin-top: 11px; }
-
-.view { margin-top: 22px; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-.panel-head {
-  padding: 16px 19px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-}
-.panel-title { font-size: 17px; font-weight: 900; color: var(--text-strong); }
-.panel-count { color: var(--muted); font-size: 11px; margin-top: 1px; }
-.toolbar { padding: 11px 19px; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
-.search {
-  width: 100%; max-width: 410px; border: 1px solid var(--border); border-radius: 9px;
-  padding: 9px 11px; outline: none; background: var(--surface); color: var(--text); font-size: 12px;
-}
-.search::placeholder { color: #7A869A; }
-.search:focus { border-color: #85B7FF; box-shadow: 0 0 0 3px var(--primary-soft); }
-.test-list { padding: 7px; }
-.test-row {
-  width: 100%; appearance: none; background: var(--surface); color: var(--text);
-  border: 1px solid transparent; border-radius: 10px; padding: 12px 12px;
-  display: flex; align-items: center; justify-content: space-between; gap: 15px; text-align: left;
-}
-.test-row:hover { background: var(--surface-soft); border-color: var(--border); }
-.test-main { min-width: 0; }
-.test-name { color: var(--text-strong); font-weight: 800; font-size: 13px; overflow-wrap: anywhere; }
-.test-secondary { color: var(--muted); font-size: 11px; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 8px; }
-.test-side { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.badge {
-  display: inline-flex; align-items: center; padding: 4px 7px; border-radius: 999px;
-  font-size: 9px; font-weight: 900; white-space: nowrap;
-}
-.sev-critical, .sev-high { color: var(--danger); background: var(--danger-soft); }
-.sev-medium { color: var(--warning); background: var(--warning-soft); }
-.sev-low { color: var(--success); background: var(--success-soft); }
-.conf-high { color: var(--primary-dark); background: var(--primary-soft); }
-.conf-medium { color: #5E4DB2; background: #F3F0FF; }
-.conf-low { color: var(--muted); background: var(--surface-soft); }
-
-.detail { margin-top: 22px; display: none; }
-.detail.visible { display: block; }
-.back { border: 0; background: transparent; color: var(--primary); font-weight: 800; padding: 0; font-size: 11px; }
-.back:hover { color: var(--primary-dark); text-decoration: underline; }
-.detail-head { padding: 18px 19px; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
-.detail-title { margin-top: 10px; font-size: 20px; font-weight: 900; color: var(--text-strong); letter-spacing: -.02em; overflow-wrap: anywhere; }
-.detail-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
-.detail-body { padding: 19px; }
-.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.info-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface-soft); }
-.info-card.full { grid-column: 1 / -1; }
-.info-label { color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-size: 9px; font-weight: 900; margin-bottom: 5px; }
-.info-value { color: var(--text); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.info-value.evidence, .trace { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
-.disclosure { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
-.disclosure summary { cursor: pointer; padding: 11px 13px; font-weight: 800; font-size: 11px; background: var(--surface); color: var(--text-strong); }
-.disclosure summary:hover { background: var(--surface-soft); }
-.disclosure pre { margin: 0; padding: 13px; background: #172B4D; color: #F4F5F7; max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
-.empty { padding: 34px 18px; text-align: center; color: var(--muted); font-size: 12px; }
-.footer { color: var(--muted); text-align: center; font-size: 10px; margin-top: 27px; }
-
-@media (max-width: 1000px) {
-  .category-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 700px) {
-  .container { padding: 20px 13px 42px; }
-  .topbar-inner { padding: 12px 14px; }
-  .hero { align-items: flex-start; flex-direction: column; }
-  .stats { grid-template-columns: 1fr 1fr; }
-  .category-grid { grid-template-columns: 1fr 1fr; }
-  .detail-grid { grid-template-columns: 1fr; }
-  .info-card.full { grid-column: auto; }
-  .test-row { align-items: flex-start; flex-direction: column; }
-  .test-side { width: 100%; justify-content: flex-start; }
-  .release { align-items: flex-start; flex-direction: column; }
-}
-@media (max-width: 440px) {
-  .stats, .category-grid { grid-template-columns: 1fr; }
-}
-
-@media print {
-  body { background: white; }
-  .topbar { position: static; }
-  .container { max-width: none; padding: 0; }
-  .panel, .stat, .release { box-shadow: none; }
-}
+*{box-sizing:border-box} html{scroll-behavior:smooth;background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.52;-webkit-font-smoothing:antialiased}
+a{color:inherit}.app{min-height:100vh}
+.topbar{background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}.topbar-inner{max-width:1180px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.brand{display:flex;align-items:center;gap:12px}.brand-mark{width:38px;height:38px;border-radius:11px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:900}.brand-title{color:var(--text-strong);font-weight:900;font-size:16px}.brand-sub{color:var(--muted);font-size:12px}
+.status{padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;background:var(--surface-2);border:1px solid var(--border)}.status.success{color:var(--success);background:var(--success-soft)}.status.failure{color:var(--danger);background:var(--danger-soft)}
+.container{max-width:1180px;margin:0 auto;padding:30px 24px 64px}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}
+.eyebrow{color:var(--muted);text-transform:uppercase;letter-spacing:.11em;font-size:10px;font-weight:900}h1{margin:4px 0 5px;color:var(--text-strong);font-size:31px;line-height:1.15;font-weight:900;letter-spacing:-.035em}.build-number{color:var(--muted-2);font-weight:700}.hero-meta{color:var(--muted);font-size:13px}.hero-meta a{color:var(--primary);text-decoration:none;font-weight:800}
+.release{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 19px;display:flex;align-items:center;justify-content:space-between;gap:18px;box-shadow:var(--shadow);margin-bottom:22px}.release-main{display:flex;align-items:center;gap:13px}.release-icon{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--surface-2)}.release.go{border-left:4px solid var(--success)}.release.conditional-go{border-left:4px solid var(--warning)}.release.hold,.release.no-go{border-left:4px solid var(--danger)}.release-title{color:var(--text-strong);font-weight:900}.release-reason{color:var(--muted);font-size:12px;margin-top:2px}.risk-pill{padding:7px 11px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;font-weight:800;white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}.stat{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:15px 17px;box-shadow:var(--shadow)}.stat-value{color:var(--text-strong);font-size:25px;font-weight:900;letter-spacing:-.035em}.stat-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;margin-top:3px}
+.section-title{margin:0 0 4px;color:var(--text-strong);font-size:19px;font-weight:900;letter-spacing:-.02em}.section-subtitle{margin:0 0 15px;color:var(--muted);font-size:13px}.category-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:13px}.category-link{display:block;text-decoration:none}
+.category-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:18px;min-height:142px;box-shadow:var(--shadow);overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease,background .16s ease}.category-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--primary)}.category-link:hover .category-card{transform:translateY(-3px);border-color:#B7C9E8;box-shadow:var(--shadow-hover);background:#FBFDFF}.category-name{color:var(--text-strong);font-weight:800;font-size:14px;min-height:39px;padding-right:18px}.category-count{color:var(--text-strong);font-size:34px;line-height:1;font-weight:900;letter-spacing:-.05em;margin-top:13px}.category-label{color:var(--muted);font-size:11px;margin-top:5px}.category-cta{position:absolute;right:17px;bottom:15px;color:var(--primary);font-size:12px;font-weight:900}
+.category-section,.detail{scroll-margin-top:80px;margin-top:26px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px}.panel-title{color:var(--text-strong);font-size:18px;font-weight:900}.panel-count{color:var(--muted);font-size:12px;font-weight:700}.back-link{color:var(--primary);text-decoration:none;font-size:12px;font-weight:800}.back-link:hover{text-decoration:underline}.test-list{padding:8px}.test-link{display:block;text-decoration:none}
+.test-row{background:var(--surface);border:1px solid transparent;border-radius:11px;padding:14px 13px;display:flex;align-items:center;justify-content:space-between;gap:16px;transition:background .14s ease,border-color .14s ease}.test-link:hover .test-row{background:var(--surface-2);border-color:var(--border)}.test-main{min-width:0}.test-name{color:var(--text-strong);font-weight:800;font-size:14px;overflow-wrap:anywhere}.test-secondary{color:var(--muted);font-size:12px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px}.test-side{display:flex;align-items:center;gap:8px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:900;white-space:nowrap}.sev-critical,.sev-high{color:var(--danger);background:var(--danger-soft)}.sev-medium{color:var(--warning);background:var(--warning-soft)}.sev-low{color:var(--success);background:var(--success-soft)}.conf-high{color:var(--primary-dark);background:var(--primary-soft)}.conf-medium{color:#5E4DB2;background:#F3F0FF}.conf-low{color:var(--muted);background:var(--surface-2)}
+.detail-head{padding:20px 21px;border-bottom:1px solid var(--border);background:#FCFDFE}.detail-title{color:var(--text-strong);font-size:22px;line-height:1.25;font-weight:900;letter-spacing:-.025em;overflow-wrap:anywhere;margin-top:10px}.detail-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.detail-body{padding:21px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.info-card{border:1px solid var(--border);border-radius:13px;padding:15px;background:var(--surface-2)}.info-card.full{grid-column:1/-1}.info-label{color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-size:10px;font-weight:900;margin-bottom:6px}.info-value{color:var(--text);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.info-value.evidence,.trace{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}.disclosure{margin-top:14px;border:1px solid var(--border);border-radius:12px;overflow:hidden}.disclosure summary{cursor:pointer;padding:12px 14px;font-weight:800;font-size:12px;color:var(--text-strong);background:#fff}.disclosure summary:hover{background:var(--surface-2)}.disclosure .tech-block{padding:14px;background:var(--surface-2);border-top:1px solid var(--border)}.disclosure pre{margin:10px 0 0;padding:14px;background:#172B4D;color:#F1F5F9;max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:9px}.empty{padding:38px 20px;text-align:center;color:var(--muted)}.footer{color:var(--muted);text-align:center;font-size:11px;margin-top:28px}
+@media (max-width:1000px){.category-grid{grid-template-columns:repeat(3,1fr)}}@media (max-width:700px){.container{padding:20px 13px 44px}.topbar-inner{padding:13px 14px}.hero{align-items:flex-start;flex-direction:column}h1{font-size:27px}.category-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.test-row{align-items:flex-start;flex-direction:column}.test-side{width:100%;justify-content:flex-start}.release{align-items:flex-start;flex-direction:column}}@media (max-width:460px){.category-grid,.stats{grid-template-columns:1fr}}@media print{body{background:#fff}.topbar{position:static}.category-section,.detail{break-inside:avoid}}
 """
 
 
-def category_card(category: str, count: int) -> str:
-    return f"""
-    <button class=\"category-card\" data-category=\"{html_escape(category)}\" onclick=\"showCategory({js_json(category)})\">
-      <div class=\"category-name\">{html_escape(category)}</div>
-      <div class=\"category-count\">{count}</div>
-      <div class=\"category-label\">failed test{'s' if count != 1 else ''}</div>
-      <div class=\"category-accent\"></div>
-    </button>
-    """
+def severity_css_class(value: Any) -> str:
+    return "sev-" + str(value or "low").strip().lower().replace(" ", "-")
 
 
-def finding_js(finding: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "test_name": finding["test_name"],
-        "status": finding["status"],
-        "category": finding["category"],
-        "severity": finding["severity"],
-        "confidence": finding["confidence"],
-        "module": finding["module"],
-        "suite": finding["suite"],
-        "feature": finding["feature"],
-        "duration_ms": finding["duration_ms"],
-        "exception_type": finding["exception_type"],
-        "failure_message": finding["failure_message"],
-        "stack_trace": finding["stack_trace"],
-        "fingerprint": finding["fingerprint"],
-        "duplicate_count": finding["duplicate_count"],
-        "cluster_id": finding["cluster_id"],
-        "root_cause": finding["root_cause"],
-        "evidence": finding["evidence"],
-        "suggested_fix": finding["suggested_fix"],
-        "recommended_action": finding["recommended_action"],
-        "suggested_owner": finding["suggested_owner"],
-    }
+def confidence_css_class(value: Any) -> str:
+    return "conf-" + str(value or "low").strip().lower().replace(" ", "-")
 
 
-def generate_html_dashboard(
-    metadata: BuildMetadata,
-    metrics: BuildMetrics,
-    findings: List[Dict[str, Any]],
-    risk: Dict[str, Any],
-) -> str:
-    category_counts = {category: sum(1 for f in findings if f["category"] == category) for category in CATEGORIES}
-    findings_payload = [finding_js(f) for f in findings]
+def info_card_html(label: str, value: Any, full: bool = False, extra: str = "") -> str:
+    classes = "info-card" + (" full" if full else "")
+    value_class = "info-value" + ((" " + extra) if extra else "")
+    return f'<div class="{classes}"><div class="info-label">{html_escape(label)}</div><div class="{value_class}">{html_escape(value or "Not available")}</div></div>'
+
+
+def test_info_text(finding: Dict[str, Any]) -> str:
+    duration = finding.get("duration_ms")
+    duration_text = f"{float(duration)/1000:.2f} s" if duration not in (None, "") else "Not available"
+    return (f"Status: {finding.get('status') or 'Not available'}\n"
+            f"Module: {finding.get('module') or 'Unknown'}\n"
+            f"Suite: {finding.get('suite') or 'Unknown'}\n"
+            f"Feature: {finding.get('feature') or 'Unknown'}\n"
+            f"Duration: {duration_text}\n"
+            f"Cluster: {finding.get('cluster_id') or 'Not available'}\n"
+            f"Related failures: {finding.get('duplicate_count') or 1}")
+
+
+def category_card(category: str, count: int, anchor: str) -> str:
+    plural = "s" if count != 1 else ""
+    return f'<a class="category-link" href="#{html_escape(anchor)}" aria-label="Open {html_escape(category)} category"><div class="category-card"><div class="category-name">{html_escape(category)}</div><div class="category-count">{count}</div><div class="category-label">failed test{plural}</div><div class="category-cta">View tests →</div></div></a>'
+
+
+def category_anchor(category: str) -> str:
+    return "category-" + re.sub(r"[^a-z0-9]+", "-", category.lower()).strip("-")
+
+
+def finding_anchor(finding: Dict[str, Any], index: int) -> str:
+    digest = hashlib.sha1(f"{finding.get('test_name','')}|{index}".encode("utf-8")).hexdigest()[:10]
+    return f"test-{digest}"
+
+
+def finding_category_map(findings: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    grouped = {category: [] for category in CATEGORIES}
+    for finding in findings:
+        category = finding.get("category") if finding.get("category") in CATEGORIES else "Unknown"
+        grouped[category].append(finding)
+    return grouped
+
+
+def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, findings: List[Dict[str, Any]], risk: Dict[str, Any]) -> str:
+    grouped = finding_category_map(findings)
     recommendation = risk["recommendation"]
     rec_class = recommendation.lower().replace("_", "-")
     rec_icon = "✓" if recommendation == "GO" else "⚠" if recommendation == "CONDITIONAL_GO" else "!"
     pipeline_class = "success" if metadata.pipeline_status == "SUCCESS" else "failure" if metadata.pipeline_status in {"FAILURE", "FAILED"} else ""
+    build_link = f'<a href="{html_escape(metadata.build_url)}" target="_blank" rel="noopener">Open Jenkins build ↗</a>' if metadata.build_url else ""
+    category_cards = "\n".join(category_card(c, len(grouped[c]), category_anchor(c)) for c in CATEGORIES)
 
-    build_link = ""
-    if metadata.build_url:
-        build_link = f'<a href="{html_escape(metadata.build_url)}" target="_blank" rel="noopener">Open Jenkins build ↗</a>'
+    category_sections = []
+    index = 0
+    for category in CATEGORIES:
+        items = grouped[category]
+        rows = []
+        plural = "s" if len(items) != 1 else ""
+        for finding in items:
+            index += 1
+            anchor = finding_anchor(finding, index)
+            module_text = finding.get("module") or finding.get("suite") or "Unknown"
+            related = f'<span>•</span><span>{finding["duplicate_count"]} related</span>' if finding.get("duplicate_count", 1) > 1 else ""
+            rows.append(f'<a class="test-link" href="#{anchor}"><div class="test-row"><div class="test-main"><div class="test-name">{html_escape(finding.get("test_name"))}</div><div class="test-secondary"><span>{html_escape(module_text)}</span><span>•</span><span>{html_escape(finding.get("exception_type") or "Failure")}</span>{related}</div></div><div class="test-side"><span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))}</span><span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span></div></div></a>')
+        body = "".join(rows) if rows else '<div class="empty">No failed tests in this category.</div>'
+        category_sections.append(f'<section class="category-section" id="{category_anchor(category)}"><div class="panel"><div class="panel-head"><div><div class="panel-title">{html_escape(category)}</div><div class="panel-count">{len(items)} failed test{plural}</div></div><a class="back-link" href="#categories">Back to categories</a></div><div class="test-list">{body}</div></div></section>')
 
-    category_cards = "\n".join(category_card(category, category_counts[category]) for category in CATEGORIES)
+    detail_sections = []
+    index = 0
+    for category in CATEGORIES:
+        for finding in grouped[category]:
+            index += 1
+            anchor = finding_anchor(finding, index)
+            detail_sections.append(f'<section class="detail" id="{anchor}"><div class="panel"><div class="detail-head"><a class="back-link" href="#{category_anchor(category)}">← Back to {html_escape(category)}</a><div class="detail-title">{html_escape(finding.get("test_name"))}</div><div class="detail-meta"><span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))} severity</span><span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span></div></div><div class="detail-body"><div class="detail-grid">{info_card_html("Root Cause Analysis", finding.get("root_cause"), True)}{info_card_html("Suggested Fix", finding.get("suggested_fix"), True)}{info_card_html("Recommended Action", finding.get("recommended_action"))}{info_card_html("Suggested Owner", finding.get("suggested_owner"))}{info_card_html("Evidence", finding.get("evidence"), True, "evidence")}{info_card_html("Test Information", test_info_text(finding), True)}</div><details class="disclosure"><summary>Technical failure evidence</summary><div class="tech-block"><div class="info-label">Failure message</div><div class="info-value trace">{html_escape(finding.get("failure_message") or "No failure message available.")}</div><pre>{html_escape(finding.get("stack_trace") or "No stack trace available.")}</pre></div></details></div></div></section>')
 
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
 <title>CI Failure Triage — Build {html_escape(metadata.build_number)}</title>
 <style>{CSS}</style>
 </head>
 <body>
 <div class="app">
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark">T</div>
-        <div>
-          <div class="brand-title">CI Failure Triage</div>
-          <div class="brand-sub">Failure classification &amp; root-cause analysis</div>
-        </div>
-      </div>
-      <div class="status {pipeline_class}">Pipeline: {html_escape(metadata.pipeline_status)}</div>
-    </div>
-  </header>
-
-  <main class="container">
-    <section class="hero">
-      <div>
-        <div class="eyebrow">Build overview</div>
-        <h1>{html_escape(metadata.job_name)} <span style="color:#98a2b3">#{html_escape(metadata.build_number)}</span></h1>
-        <div class="hero-meta">Generated {html_escape(metadata.timestamp)} &nbsp; {build_link}</div>
-      </div>
-    </section>
-
-    <section class="release {rec_class}">
-      <div class="release-main">
-        <div class="release-icon">{rec_icon}</div>
-        <div>
-          <div class="release-title">Release recommendation: {html_escape(recommendation.replace('_', ' '))}</div>
-          <div class="release-reason">{html_escape(risk['reason'])}</div>
-        </div>
-      </div>
-      <div class="risk-pill">Risk: {html_escape(risk['risk_level'])}</div>
-    </section>
-
-    <section class="stats">
-      <div class="stat"><div class="stat-value">{metrics.total}</div><div class="stat-label">Total tests</div></div>
-      <div class="stat"><div class="stat-value">{metrics.passed}</div><div class="stat-label">Passed</div></div>
-      <div class="stat"><div class="stat-value">{metrics.failed + metrics.broken}</div><div class="stat-label">Failed / broken</div></div>
-      <div class="stat"><div class="stat-value">{metrics.pass_rate}%</div><div class="stat-label">Pass rate</div></div>
-    </section>
-
-    <section>
-      <h2 class="section-title">Failure Categories</h2>
-      <p class="section-subtitle">Select a category to see only the failed tests assigned to it.</p>
-      <div class="category-grid">{category_cards}</div>
-    </section>
-
-    <section id="categoryView" class="view" style="display:none"></section>
-    <section id="detailView" class="detail"></section>
-
-    <div class="footer">Generated by the AI-Powered CI Failure Triage Engine · Evidence-based analysis</div>
-  </main>
-</div>
-
-<script>
-const CATEGORIES = {js_json(CATEGORIES)};
-const FINDINGS = {js_json(findings_payload)};
-const CATEGORY_COUNTS = {js_json(category_counts)};
-let selectedCategory = null;
-let selectedTest = null;
-
-function esc(value) {{
-  return String(value ?? '').replace(/[&<>'"]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}}[c]));
-}}
-
-function sevClass(value) {{ return 'sev-' + String(value || 'low').toLowerCase(); }}
-function confClass(value) {{ return 'conf-' + String(value || 'low').toLowerCase(); }}
-
-function showCategory(category) {{
-  selectedCategory = category;
-  selectedTest = null;
-  document.querySelectorAll('.category-card').forEach(card => card.classList.toggle('active', card.dataset.category === category));
-  document.getElementById('detailView').classList.remove('visible');
-  renderCategory();
-  document.getElementById('categoryView').scrollIntoView({{behavior:'smooth', block:'start'}});
-}}
-
-function renderCategory() {{
-  const view = document.getElementById('categoryView');
-  view.style.display = 'block';
-  const tests = FINDINGS.filter(f => f.category === selectedCategory);
-  view.innerHTML = `
-    <div class="panel">
-      <div class="panel-head">
-        <div><div class="panel-title">${{esc(selectedCategory)}}</div><div class="panel-count">${{tests.length}} failed test${{tests.length === 1 ? '' : 's'}}</div></div>
-        <button class="back" onclick="clearCategory()">Back to categories</button>
-      </div>
-      ${{tests.length ? `
-      <div class="toolbar"><input id="testSearch" class="search" placeholder="Search failed tests..." oninput="filterTests()"></div>
-      <div id="testList" class="test-list">${{tests.map((f, i) => testRow(f, i)).join('')}}</div>
-      ` : `<div class="empty">No failed tests in this category.</div>`}}
-    </div>`;
-}}
-
-function testRow(f, index) {{
-  const moduleText = f.module && f.module !== 'Unknown' ? f.module : f.suite;
-  return `
-    <button class="test-row" data-test-index="${{index}}" onclick="showTestByIndex(${{index}})">
-      <div class="test-main">
-        <div class="test-name">${{esc(f.test_name)}}</div>
-        <div class="test-secondary">
-          <span>${{esc(moduleText || 'Unknown')}}</span>
-          <span>•</span><span>${{esc(f.exception_type || 'Failure')}}</span>
-          ${{f.duplicate_count > 1 ? `<span>•</span><span>${{f.duplicate_count}} related</span>` : ''}}
-        </div>
-      </div>
-      <div class="test-side">
-        <span class="badge ${{sevClass(f.severity)}}">${{esc(f.severity)}}</span>
-        <span class="badge ${{confClass(f.confidence)}}">${{esc(f.confidence)}} confidence</span>
-      </div>
-    </button>`;
-}}
-
-function filterTests() {{
-  const query = document.getElementById('testSearch').value.toLowerCase().trim();
-  document.querySelectorAll('#testList .test-row').forEach(row => {{
-    row.style.display = row.innerText.toLowerCase().includes(query) ? '' : 'none';
-  }});
-}}
-
-function showTest(testName) {{
-  const f = FINDINGS.find(item => item.test_name === testName);
-  if (!f) return;
-  selectedTest = f;
-  const detail = document.getElementById('detailView');
-  detail.classList.add('visible');
-  detail.innerHTML = `
-    <div class="panel">
-      <div class="detail-head">
-        <button class="back" onclick="backToCategory()">← Back to ${{esc(f.category)}}</button>
-        <div class="detail-title" style="margin-top:12px">${{esc(f.test_name)}}</div>
-        <div class="detail-meta">
-          <span class="badge ${{sevClass(f.severity)}}">${{esc(f.severity)}} severity</span>
-          <span class="badge ${{confClass(f.confidence)}}">${{esc(f.confidence)}} confidence</span>
-          <span class="badge" >${{esc(f.category)}}</span>
-        </div>
-      </div>
-      <div class="detail-body">
-        <div class="detail-grid">
-          ${{infoCard('Root Cause Analysis', f.root_cause, true)}}
-          ${{infoCard('Suggested Fix', f.suggested_fix, true)}}
-          ${{infoCard('Recommended Action', f.recommended_action)}}
-          ${{infoCard('Suggested Owner', f.suggested_owner)}}
-          ${{infoCard('Evidence', f.evidence, true, 'evidence')}}
-          ${{infoCard('Test Information', testInfo(f), true)}}
-        </div>
-        <details class="disclosure">
-          <summary>Technical failure evidence</summary>
-          <div class="info-card" style="border:0;border-radius:0">
-            <div class="info-label">Failure message</div>
-            <div class="info-value trace">${{esc(f.failure_message || 'No failure message available.')}}</div>
-          </div>
-          <pre>${{esc(f.stack_trace || 'No stack trace available.')}}</pre>
-        </details>
-      </div>
-    </div>`;
-  detail.scrollIntoView({{behavior:'smooth', block:'start'}});
-}}
-
-function infoCard(label, value, full=false, extra='') {{
-  return `<div class="info-card ${{full ? 'full' : ''}}"><div class="info-label">${{esc(label)}}</div><div class="info-value ${{extra}}">${{esc(value || 'Not available')}}</div></div>`;
-}}
-
-function testInfo(f) {{
-  const duration = f.duration_ms ? `${{(f.duration_ms / 1000).toFixed(2)}} s` : 'Not available';
-  return `Status: ${{f.status}}\\nModule: ${{f.module}}\\nSuite: ${{f.suite}}\\nFeature: ${{f.feature}}\\nDuration: ${{duration}}\\nCluster: ${{f.cluster_id}}\\nRelated failures: ${{f.duplicate_count}}`;
-}}
-
-function backToCategory() {{
-  document.getElementById('detailView').classList.remove('visible');
-  document.getElementById('categoryView').scrollIntoView({{behavior:'smooth', block:'start'}});
-}}
-
-function clearCategory() {{
-  selectedCategory = null;
-  selectedTest = null;
-  document.querySelectorAll('.category-card').forEach(card => card.classList.remove('active'));
-  document.getElementById('categoryView').style.display = 'none';
-  document.getElementById('detailView').classList.remove('visible');
-  window.scrollTo({{top: 0, behavior:'smooth'}});
-}}
-</script>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark">T</div><div><div class="brand-title">CI Failure Triage</div><div class="brand-sub">Failure classification &amp; root-cause analysis</div></div></div><div class="status {pipeline_class}">Pipeline: {html_escape(metadata.pipeline_status)}</div></div></header>
+<main class="container">
+<section class="hero"><div><div class="eyebrow">Build overview</div><h1>{html_escape(metadata.job_name)} <span class="build-number">#{html_escape(metadata.build_number)}</span></h1><div class="hero-meta">Generated {html_escape(metadata.timestamp)} &nbsp; {build_link}</div></div></section>
+<section class="release {rec_class}"><div class="release-main"><div class="release-icon">{rec_icon}</div><div><div class="release-title">Release recommendation: {html_escape(recommendation.replace("_", " "))}</div><div class="release-reason">{html_escape(risk['reason'])}</div></div></div><div class="risk-pill">Risk: {html_escape(risk['risk_level'])}</div></section>
+<section class="stats"><div class="stat"><div class="stat-value">{metrics.total}</div><div class="stat-label">Total tests</div></div><div class="stat"><div class="stat-value">{metrics.passed}</div><div class="stat-label">Passed</div></div><div class="stat"><div class="stat-value">{metrics.failed + metrics.broken}</div><div class="stat-label">Failed / broken</div></div><div class="stat"><div class="stat-value">{metrics.pass_rate}%</div><div class="stat-label">Pass rate</div></div></section>
+<section id="categories"><h2 class="section-title">Failure Categories</h2><p class="section-subtitle">Select a category to see its failed tests.</p><div class="category-grid">{category_cards}</div></section>
+{''.join(category_sections)}
+{''.join(detail_sections)}
+<div class="footer">Generated by the AI-Powered CI Failure Triage Engine</div>
+</main></div>
 </body>
 </html>'''
 
