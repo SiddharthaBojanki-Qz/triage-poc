@@ -50,7 +50,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
 
 
 # ============================================================
@@ -707,6 +706,7 @@ def perform_ai_triage(
     payload = build_ai_payload(metadata, metrics, failures, clusters, console_log)
 
     try:
+        from openai import OpenAI
         client = OpenAI()
         response = client.chat.completions.create(
             model=AI_MODEL,
@@ -895,29 +895,23 @@ def generate_markdown_report(
 # ============================================================
 
 CSS = r"""
-:root {
-  --bg:#F7F8FA; --surface:#FFFFFF; --surface-2:#F4F5F7; --text:#172B4D; --text-strong:#0F1F3D;
-  --muted:#5E6C84; --muted-2:#7A869A; --border:#DFE1E6; --primary:#0C66E4; --primary-dark:#0747A6;
-  --primary-soft:#E9F2FF; --danger:#AE2E24; --danger-soft:#FFEBE9; --warning:#974F0C; --warning-soft:#FFF4E5;
-  --success:#216E4E; --success-soft:#DCFFF1; --shadow:0 8px 24px rgba(9,30,66,.06); --shadow-hover:0 12px 28px rgba(9,30,66,.10);
-  --radius:14px;
-}
-*{box-sizing:border-box} html{scroll-behavior:smooth;background:var(--bg)}
-body{margin:0;background:var(--bg);color:var(--text);font-family:"Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.52;-webkit-font-smoothing:antialiased}
-a{color:inherit}.app{min-height:100vh}
-.topbar{background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}.topbar-inner{max-width:1180px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}
-.brand{display:flex;align-items:center;gap:12px}.brand-mark{width:38px;height:38px;border-radius:11px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:900}.brand-title{color:var(--text-strong);font-weight:900;font-size:16px}.brand-sub{color:var(--muted);font-size:12px}
-.status{padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;background:var(--surface-2);border:1px solid var(--border)}.status.success{color:var(--success);background:var(--success-soft)}.status.failure{color:var(--danger);background:var(--danger-soft)}
-.container{max-width:1180px;margin:0 auto;padding:30px 24px 64px}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}
-.eyebrow{color:var(--muted);text-transform:uppercase;letter-spacing:.11em;font-size:10px;font-weight:900}h1{margin:4px 0 5px;color:var(--text-strong);font-size:31px;line-height:1.15;font-weight:900;letter-spacing:-.035em}.build-number{color:var(--muted-2);font-weight:700}.hero-meta{color:var(--muted);font-size:13px}.hero-meta a{color:var(--primary);text-decoration:none;font-weight:800}
-.release{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 19px;display:flex;align-items:center;justify-content:space-between;gap:18px;box-shadow:var(--shadow);margin-bottom:22px}.release-main{display:flex;align-items:center;gap:13px}.release-icon{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-weight:900;background:var(--surface-2)}.release.go{border-left:4px solid var(--success)}.release.conditional-go{border-left:4px solid var(--warning)}.release.hold,.release.no-go{border-left:4px solid var(--danger)}.release-title{color:var(--text-strong);font-weight:900}.release-reason{color:var(--muted);font-size:12px;margin-top:2px}.risk-pill{padding:7px 11px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;font-weight:800;white-space:nowrap}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}.stat{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:15px 17px;box-shadow:var(--shadow)}.stat-value{color:var(--text-strong);font-size:25px;font-weight:900;letter-spacing:-.035em}.stat-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;margin-top:3px}
-.section-title{margin:0 0 4px;color:var(--text-strong);font-size:19px;font-weight:900;letter-spacing:-.02em}.section-subtitle{margin:0 0 15px;color:var(--muted);font-size:13px}.category-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:13px}.category-link{display:block;text-decoration:none}
-.category-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:18px;min-height:142px;box-shadow:var(--shadow);overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease,background .16s ease}.category-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--primary)}.category-link:hover .category-card{transform:translateY(-3px);border-color:#B7C9E8;box-shadow:var(--shadow-hover);background:#FBFDFF}.category-name{color:var(--text-strong);font-weight:800;font-size:14px;min-height:39px;padding-right:18px}.category-count{color:var(--text-strong);font-size:34px;line-height:1;font-weight:900;letter-spacing:-.05em;margin-top:13px}.category-label{color:var(--muted);font-size:11px;margin-top:5px}.category-cta{position:absolute;right:17px;bottom:15px;color:var(--primary);font-size:12px;font-weight:900}
-.category-section,.detail{scroll-margin-top:80px;margin-top:26px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px}.panel-title{color:var(--text-strong);font-size:18px;font-weight:900}.panel-count{color:var(--muted);font-size:12px;font-weight:700}.back-link{color:var(--primary);text-decoration:none;font-size:12px;font-weight:800}.back-link:hover{text-decoration:underline}.test-list{padding:8px}.test-link{display:block;text-decoration:none}
-.test-row{background:var(--surface);border:1px solid transparent;border-radius:11px;padding:14px 13px;display:flex;align-items:center;justify-content:space-between;gap:16px;transition:background .14s ease,border-color .14s ease}.test-link:hover .test-row{background:var(--surface-2);border-color:var(--border)}.test-main{min-width:0}.test-name{color:var(--text-strong);font-weight:800;font-size:14px;overflow-wrap:anywhere}.test-secondary{color:var(--muted);font-size:12px;margin-top:4px;display:flex;flex-wrap:wrap;gap:9px}.test-side{display:flex;align-items:center;gap:8px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:900;white-space:nowrap}.sev-critical,.sev-high{color:var(--danger);background:var(--danger-soft)}.sev-medium{color:var(--warning);background:var(--warning-soft)}.sev-low{color:var(--success);background:var(--success-soft)}.conf-high{color:var(--primary-dark);background:var(--primary-soft)}.conf-medium{color:#5E4DB2;background:#F3F0FF}.conf-low{color:var(--muted);background:var(--surface-2)}
-.detail-head{padding:20px 21px;border-bottom:1px solid var(--border);background:#FCFDFE}.detail-title{color:var(--text-strong);font-size:22px;line-height:1.25;font-weight:900;letter-spacing:-.025em;overflow-wrap:anywhere;margin-top:10px}.detail-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.detail-body{padding:21px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.info-card{border:1px solid var(--border);border-radius:13px;padding:15px;background:var(--surface-2)}.info-card.full{grid-column:1/-1}.info-label{color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-size:10px;font-weight:900;margin-bottom:6px}.info-value{color:var(--text);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.info-value.evidence,.trace{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}.disclosure{margin-top:14px;border:1px solid var(--border);border-radius:12px;overflow:hidden}.disclosure summary{cursor:pointer;padding:12px 14px;font-weight:800;font-size:12px;color:var(--text-strong);background:#fff}.disclosure summary:hover{background:var(--surface-2)}.disclosure .tech-block{padding:14px;background:var(--surface-2);border-top:1px solid var(--border)}.disclosure pre{margin:10px 0 0;padding:14px;background:#172B4D;color:#F1F5F9;max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:9px}.empty{padding:38px 20px;text-align:center;color:var(--muted)}.footer{color:var(--muted);text-align:center;font-size:11px;margin-top:28px}
-@media (max-width:1000px){.category-grid{grid-template-columns:repeat(3,1fr)}}@media (max-width:700px){.container{padding:20px 13px 44px}.topbar-inner{padding:13px 14px}.hero{align-items:flex-start;flex-direction:column}h1{font-size:27px}.category-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.test-row{align-items:flex-start;flex-direction:column}.test-side{width:100%;justify-content:flex-start}.release{align-items:flex-start;flex-direction:column}}@media (max-width:460px){.category-grid,.stats{grid-template-columns:1fr}}@media print{body{background:#fff}.topbar{position:static}.category-section,.detail{break-inside:avoid}}
+:root{--bg:#f6f7f9;--surface:#fff;--surface2:#f7f8fa;--text:#172b4d;--strong:#0f1f3d;--muted:#5e6c84;--border:#dfe1e6;--primary:#0c66e4;--primaryDark:#0747a6;--primarySoft:#e9f2ff;--danger:#ae2e24;--dangerSoft:#ffebe9;--warning:#974f0c;--warningSoft:#fff4e5;--success:#216e4e;--successSoft:#dcfff1;--shadow:0 6px 18px rgba(9,30,66,.06)}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg)}body{font-family:"Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--text);line-height:1.45;-webkit-font-smoothing:antialiased}label{font:inherit}
+.topbar{height:64px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center}.topbar-inner{width:100%;max-width:1220px;margin:0 auto;padding:0 22px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:11px}.brand-mark{width:34px;height:34px;border-radius:10px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:900}.brand-title{font-size:15px;font-weight:900;color:var(--strong)}.brand-sub{font-size:11px;color:var(--muted)}.status{font-size:11px;font-weight:900;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);color:var(--muted)}.status.failure{color:var(--danger);background:var(--dangerSoft)}.status.success{color:var(--success);background:var(--successSoft)}
+.container{max-width:1220px;margin:0 auto;padding:18px 22px 22px}.hero{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.eyebrow{font-size:9px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}h1{margin:2px 0 3px;font-size:25px;line-height:1.1;letter-spacing:-.03em;color:var(--strong);font-weight:900}.build-number{color:var(--muted)}.hero-meta{font-size:11px;color:var(--muted)}.hero-meta a{color:var(--primary);font-weight:800;text-decoration:none}
+.release{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:12px;padding:11px 14px;margin-bottom:14px;box-shadow:var(--shadow)}.release.hold,.release.no-go{border-left-color:var(--danger)}.release.conditional-go{border-left-color:var(--warning)}.release.go{border-left-color:var(--success)}.release-main{display:flex;align-items:center;gap:10px}.release-icon{font-weight:900;font-size:18px}.release-title{font-size:12px;color:var(--strong);font-weight:900}.release-reason{font-size:11px;color:var(--muted);margin-top:1px}.risk-pill{padding:5px 9px;border:1px solid var(--border);background:var(--surface2);border-radius:999px;font-size:10px;font-weight:900;white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.stat{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:10px 13px}.stat-value{color:var(--strong);font-size:21px;font-weight:900;letter-spacing:-.03em}.stat-label{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:800}
+.failure-workspace{display:grid;grid-template-columns:250px 330px minmax(0,1fr);gap:12px;height:calc(100vh - 235px);min-height:560px}.pane{background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;min-width:0;position:relative}.pane-header{height:58px;padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}.pane-title{font-size:13px;font-weight:900;color:var(--strong)}.pane-count{font-size:10px;color:var(--muted);font-weight:800}.pane-body{height:calc(100% - 58px);overflow:auto;padding:8px}
+.category-option,.test-option{display:block;text-decoration:none}.category-card{position:relative;display:block;border:1px solid transparent;border-radius:10px;padding:12px 12px 12px 14px;margin-bottom:6px;background:#fff;cursor:pointer;transition:.15s}.category-card:hover{background:var(--surface2);border-color:var(--border)}.category-card::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:4px;background:var(--primary)}.category-card-title{font-size:12px;color:var(--strong);font-weight:900;line-height:1.25}.category-card-count{display:flex;align-items:baseline;gap:5px;margin-top:7px}.category-card-count strong{font-size:25px;font-weight:900;color:var(--strong)}.category-card-count span{font-size:10px;color:var(--muted)}
+.test-panel{display:none;height:100%}.empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--muted);padding:30px;font-size:12px}.test-option{padding:0;margin-bottom:5px}.test-row{border:1px solid transparent;border-radius:10px;background:#fff;padding:11px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}.test-row:hover{background:var(--surface2);border-color:var(--border)}.test-row-main{min-width:0}.test-name{font-size:12px;font-weight:900;color:var(--strong);overflow-wrap:anywhere}.test-secondary{margin-top:4px;display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:9px}.test-side{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:900;white-space:nowrap}.sev-critical,.sev-high{color:var(--danger);background:var(--dangerSoft)}.sev-medium{color:var(--warning);background:var(--warningSoft)}.sev-low{color:var(--success);background:var(--successSoft)}.conf-high{color:var(--primaryDark);background:var(--primarySoft)}.conf-medium{color:#5e4db2;background:#f1eeff}.conf-low{color:var(--muted);background:var(--surface2)}
+.detail-panel,.detail-placeholder{display:none}.detail-head{height:112px;padding:16px 18px;border-bottom:1px solid var(--border);background:#fcfdfe}.detail-title{font-size:19px;line-height:1.25;color:var(--strong);font-weight:900;overflow-wrap:anywhere;margin-top:5px}.detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.detail-body{height:calc(100% - 112px);overflow:auto;padding:14px 16px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.info-card{border:1px solid var(--border);border-radius:10px;background:var(--surface2);padding:11px}.info-card.full{grid-column:1/-1}.info-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px}.info-value{font-size:12px;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden}.disclosure summary{cursor:pointer;padding:9px 11px;font-size:10px;font-weight:900;color:var(--strong);background:#fff}.disclosure .tech-block{border-top:1px solid var(--border);padding:11px;background:var(--surface2)}.disclosure pre{margin:8px 0 0;padding:11px;border-radius:8px;background:#172b4d;color:#f7f8fa;max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.tech-label{margin-top:10px}.footer{color:var(--muted);text-align:center;font-size:11px;margin-top:16px}
+.cat-radio,.test-radio{position:absolute;opacity:0;pointer-events:none}.test-pane .panel-app,.test-pane .panel-env,.test-pane .panel-data,.test-pane .panel-script,.test-pane .panel-unknown{display:none}.workspace .detail-placeholder{display:grid}
+#cat-app:checked~.workspace .panel-app,#cat-env:checked~.workspace .panel-env,#cat-data:checked~.workspace .panel-data,#cat-script:checked~.workspace .panel-script,#cat-unknown:checked~.workspace .panel-unknown{display:block}
+#cat-app:checked~.workspace .cat-app,#cat-env:checked~.workspace .cat-env,#cat-data:checked~.workspace .cat-data,#cat-script:checked~.workspace .cat-script,#cat-unknown:checked~.workspace .cat-unknown{background:var(--primarySoft);border-color:#b7c9e8}
+@media (max-width:1050px){.failure-workspace{grid-template-columns:220px 300px minmax(0,1fr)}}
+@media (max-width:850px){.failure-workspace{grid-template-columns:220px minmax(0,1fr)}.test-pane{display:block}.stats{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:640px){.container{padding:14px 10px}.topbar-inner{padding:0 12px}.hero{align-items:flex-start;flex-direction:column}.failure-workspace{grid-template-columns:1fr;height:auto;min-height:0}.pane{min-height:300px}.detail-pane{min-height:620px}.stats{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.release{align-items:flex-start;flex-direction:column}}
+@media print{.failure-workspace{height:auto}.test-panel,.detail-panel{display:block!important}.detail-panel{break-inside:avoid}}
 """
 
 
@@ -935,71 +929,167 @@ def info_card_html(label: str, value: Any, full: bool = False, extra: str = "") 
     return f'<div class="{classes}"><div class="info-label">{html_escape(label)}</div><div class="{value_class}">{html_escape(value or "Not available")}</div></div>'
 
 
-def test_info_text(finding: Dict[str, Any]) -> str:
-    duration = finding.get("duration_ms")
-    duration_text = f"{float(duration)/1000:.2f} s" if duration not in (None, "") else "Not available"
-    return (f"Status: {finding.get('status') or 'Not available'}\n"
-            f"Module: {finding.get('module') or 'Unknown'}\n"
-            f"Suite: {finding.get('suite') or 'Unknown'}\n"
-            f"Feature: {finding.get('feature') or 'Unknown'}\n"
-            f"Duration: {duration_text}\n"
-            f"Cluster: {finding.get('cluster_id') or 'Not available'}\n"
-            f"Related failures: {finding.get('duplicate_count') or 1}")
-
-
-def category_card(category: str, count: int, anchor: str) -> str:
-    plural = "s" if count != 1 else ""
-    return f'<a class="category-link" href="#{html_escape(anchor)}" aria-label="Open {html_escape(category)} category"><div class="category-card"><div class="category-name">{html_escape(category)}</div><div class="category-count">{count}</div><div class="category-label">failed test{plural}</div><div class="category-cta">View tests →</div></div></a>'
-
-
-def category_anchor(category: str) -> str:
-    return "category-" + re.sub(r"[^a-z0-9]+", "-", category.lower()).strip("-")
-
-
-def finding_anchor(finding: Dict[str, Any], index: int) -> str:
-    digest = hashlib.sha1(f"{finding.get('test_name','')}|{index}".encode("utf-8")).hexdigest()[:10]
-    return f"test-{digest}"
-
-
-def finding_category_map(findings: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    grouped = {category: [] for category in CATEGORIES}
-    for finding in findings:
-        category = finding.get("category") if finding.get("category") in CATEGORIES else "Unknown"
-        grouped[category].append(finding)
-    return grouped
-
-
 def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, findings: List[Dict[str, Any]], risk: Dict[str, Any]) -> str:
+    """Generate a compact three-pane, CSS-only drill-down dashboard.
+
+    Categories stay fixed on the left, failed tests for the selected category in
+    the center, and the selected test's analysis on the right. This avoids
+    anchor-jumping to a long page and does not require JavaScript, keeping the
+    generated report compatible with restrictive Jenkins CSP settings.
+    """
     grouped = finding_category_map(findings)
     recommendation = risk["recommendation"]
     rec_class = recommendation.lower().replace("_", "-")
     rec_icon = "✓" if recommendation == "GO" else "⚠" if recommendation == "CONDITIONAL_GO" else "!"
-    pipeline_class = "success" if metadata.pipeline_status == "SUCCESS" else "failure" if metadata.pipeline_status in {"FAILURE", "FAILED"} else ""
-    build_link = f'<a href="{html_escape(metadata.build_url)}" target="_blank" rel="noopener">Open Jenkins build ↗</a>' if metadata.build_url else ""
-    category_cards = "\n".join(category_card(c, len(grouped[c]), category_anchor(c)) for c in CATEGORIES)
+    pipeline_class = (
+        "success" if metadata.pipeline_status == "SUCCESS"
+        else "failure" if metadata.pipeline_status in {"FAILURE", "FAILED"}
+        else ""
+    )
+    build_link = (
+        f'<a href="{html_escape(metadata.build_url)}" target="_blank" rel="noopener">'
+        'Open Jenkins build ↗</a>'
+        if metadata.build_url else ""
+    )
 
-    category_sections = []
-    index = 0
-    for category in CATEGORIES:
-        items = grouped[category]
-        rows = []
+    category_defs = [
+        ("Application Defect", "cat-app", "panel-app"),
+        ("Environment Issue", "cat-env", "panel-env"),
+        ("Test Data Issue", "cat-data", "panel-data"),
+        ("Script Defect", "cat-script", "panel-script"),
+        ("Unknown", "cat-unknown", "panel-unknown"),
+    ]
+
+    # Native radio controls + CSS selectors provide the interaction without JS.
+    category_inputs = "".join(
+        f'<input class="cat-radio" type="radio" name="category" id="{radio}" '
+        f'{"checked" if idx == 0 else ""}>'
+        for idx, (_, radio, _) in enumerate(category_defs)
+    )
+
+    category_cards = "".join(
+        f'<label class="category-option" for="{radio}">'
+        f'<span class="category-card {radio}">'
+        f'<span class="category-card-title">{html_escape(category)}</span>'
+        f'<span class="category-card-count"><strong>{len(grouped[category])}</strong>'
+        f'<span>failed test{"s" if len(grouped[category]) != 1 else ""}</span></span>'
+        f'</span></label>'
+        for category, radio, _ in category_defs
+    )
+
+    test_records: List[tuple[str, Dict[str, Any]]] = []
+    for idx, finding in enumerate(findings, start=1):
+        test_records.append((f"test-{idx}", finding))
+
+    test_inputs = "".join(
+        f'<input class="test-radio" type="radio" name="test" id="{tid}" '
+        f'{"checked" if idx == 0 else ""}>'
+        for idx, (tid, _) in enumerate(test_records)
+    )
+
+    # Selectors are generated from test IDs. This keeps the report entirely
+    # self-contained and CSP-safe: no external JS and no event handlers.
+    test_selectors = "\n".join(
+        f'#{tid}:checked~.workspace .detail-{tid}{{display:block}}'
+        for tid, _ in test_records
+    )
+    css = CSS + "\n" + test_selectors
+
+    def render_test_row(tid: str, finding: Dict[str, Any]) -> str:
+        module = finding.get("module") or finding.get("suite") or "Unknown"
+        related = (
+            f'<span>•</span><span>{finding.get("duplicate_count", 1)} related</span>'
+            if finding.get("duplicate_count", 1) > 1 else ""
+        )
+        return (
+            f'<label class="test-option" for="{tid}">'
+            f'<span class="test-row">'
+            f'<span class="test-row-main">'
+            f'<span class="test-name">{html_escape(finding.get("test_name"))}</span>'
+            f'<span class="test-secondary">'
+            f'<span>{html_escape(module)}</span><span>•</span>'
+            f'<span>{html_escape(finding.get("exception_type") or "Failure")}</span>{related}'
+            f'</span></span>'
+            f'<span class="test-side">'
+            f'<span class="badge {severity_css_class(finding.get("severity"))}">'
+            f'{html_escape(finding.get("severity"))}</span>'
+            f'<span class="badge {confidence_css_class(finding.get("confidence"))}">'
+            f'{html_escape(finding.get("confidence"))}</span>'
+            f'</span></span></label>'
+        )
+
+    panels = []
+    for category, _, panel_class in category_defs:
+        items = [
+            (tid, finding) for tid, finding in test_records
+            if finding.get("category") == category
+        ]
+        body = "".join(render_test_row(tid, finding) for tid, finding in items)
+        if not body:
+            body = '<div class="empty">No failed tests in this category.</div>'
         plural = "s" if len(items) != 1 else ""
-        for finding in items:
-            index += 1
-            anchor = finding_anchor(finding, index)
-            module_text = finding.get("module") or finding.get("suite") or "Unknown"
-            related = f'<span>•</span><span>{finding["duplicate_count"]} related</span>' if finding.get("duplicate_count", 1) > 1 else ""
-            rows.append(f'<a class="test-link" href="#{anchor}"><div class="test-row"><div class="test-main"><div class="test-name">{html_escape(finding.get("test_name"))}</div><div class="test-secondary"><span>{html_escape(module_text)}</span><span>•</span><span>{html_escape(finding.get("exception_type") or "Failure")}</span>{related}</div></div><div class="test-side"><span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))}</span><span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span></div></div></a>')
-        body = "".join(rows) if rows else '<div class="empty">No failed tests in this category.</div>'
-        category_sections.append(f'<section class="category-section" id="{category_anchor(category)}"><div class="panel"><div class="panel-head"><div><div class="panel-title">{html_escape(category)}</div><div class="panel-count">{len(items)} failed test{plural}</div></div><a class="back-link" href="#categories">Back to categories</a></div><div class="test-list">{body}</div></div></section>')
+        panels.append(
+            f'<div class="test-panel {panel_class}">'
+            f'<div class="pane-header"><div><div class="pane-title">{html_escape(category)}</div>'
+            f'<div class="pane-count">{len(items)} failed test{plural}</div></div></div>'
+            f'<div class="pane-body">{body}</div></div>'
+        )
 
-    detail_sections = []
-    index = 0
-    for category in CATEGORIES:
-        for finding in grouped[category]:
-            index += 1
-            anchor = finding_anchor(finding, index)
-            detail_sections.append(f'<section class="detail" id="{anchor}"><div class="panel"><div class="detail-head"><a class="back-link" href="#{category_anchor(category)}">← Back to {html_escape(category)}</a><div class="detail-title">{html_escape(finding.get("test_name"))}</div><div class="detail-meta"><span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))} severity</span><span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span></div></div><div class="detail-body"><div class="detail-grid">{info_card_html("Root Cause Analysis", finding.get("root_cause"), True)}{info_card_html("Suggested Fix", finding.get("suggested_fix"), True)}{info_card_html("Recommended Action", finding.get("recommended_action"))}{info_card_html("Suggested Owner", finding.get("suggested_owner"))}{info_card_html("Evidence", finding.get("evidence"), True, "evidence")}{info_card_html("Test Information", test_info_text(finding), True)}</div><details class="disclosure"><summary>Technical failure evidence</summary><div class="tech-block"><div class="info-label">Failure message</div><div class="info-value trace">{html_escape(finding.get("failure_message") or "No failure message available.")}</div><pre>{html_escape(finding.get("stack_trace") or "No stack trace available.")}</pre></div></details></div></div></section>')
+    details = []
+    for tid, finding in test_records:
+        duration = finding.get("duration_ms")
+        duration_text = (
+            f'{float(duration)/1000:.2f} s'
+            if duration not in (None, "") else "Not available"
+        )
+        cards = [
+            info_card_html("Status", finding.get("status")),
+            info_card_html("Module", finding.get("module")),
+            info_card_html("Suite", finding.get("suite")),
+            info_card_html("Feature", finding.get("feature")),
+            info_card_html("Duration", duration_text),
+            info_card_html("Exception", finding.get("exception_type")),
+            info_card_html("Category", finding.get("category")),
+            info_card_html("Related Failures", str(finding.get("duplicate_count", 1))),
+            info_card_html("Root Cause Analysis", finding.get("root_cause"), True),
+            info_card_html("Suggested Fix", finding.get("suggested_fix"), True),
+            info_card_html("Recommended Action", finding.get("recommended_action"), True),
+            info_card_html("Evidence", finding.get("evidence"), True, "evidence"),
+            info_card_html("Suggested Owner", finding.get("suggested_owner")),
+        ]
+        tech = (
+            '<details class="disclosure"><summary>Technical failure evidence</summary>'
+            '<div class="tech-block">'
+            '<div class="info-label">Failure message</div>'
+            f'<div class="info-value trace">{html_escape(finding.get("failure_message") or "No failure message available.")}</div>'
+            '<div class="info-label tech-label">Stack trace</div>'
+            f'<pre>{html_escape(finding.get("stack_trace") or "No stack trace available.")}</pre>'
+            '</div></details>'
+        )
+        details.append(
+            f'<div class="detail-panel detail-{tid}">'
+            f'<div class="detail-head">'
+            f'<div class="eyebrow">{html_escape(finding.get("category"))}</div>'
+            f'<div class="detail-title">{html_escape(finding.get("test_name"))}</div>'
+            f'<div class="detail-meta">'
+            f'<span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))} severity</span>'
+            f'<span class="badge {confidence_css_class(finding.get("confidence"))}">{html_escape(finding.get("confidence"))} confidence</span>'
+            f'</div></div>'
+            f'<div class="detail-body"><div class="detail-grid">{"".join(cards)}</div>{tech}</div>'
+            f'</div>'
+        )
+
+    detail_content = (
+        '<div class="detail-placeholder empty"><div><strong>Select a failed test</strong><br>'
+        'Choose a test from the middle pane to view its root cause analysis and recommended fix.</div></div>'
+    )
+    if not test_records:
+        detail_content = (
+            '<div class="detail-placeholder empty"><div><strong>No failed tests</strong><br>'
+            'The selected build contains no failed or broken tests.</div></div>'
+        )
+    else:
+        detail_content += "".join(details)
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -1007,22 +1097,24 @@ def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, find
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CI Failure Triage — Build {html_escape(metadata.build_number)}</title>
-<style>{CSS}</style>
+<style>{css}</style>
 </head>
 <body>
 <div class="app">
 <header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark">T</div><div><div class="brand-title">CI Failure Triage</div><div class="brand-sub">Failure classification &amp; root-cause analysis</div></div></div><div class="status {pipeline_class}">Pipeline: {html_escape(metadata.pipeline_status)}</div></div></header>
 <main class="container">
 <section class="hero"><div><div class="eyebrow">Build overview</div><h1>{html_escape(metadata.job_name)} <span class="build-number">#{html_escape(metadata.build_number)}</span></h1><div class="hero-meta">Generated {html_escape(metadata.timestamp)} &nbsp; {build_link}</div></div></section>
-<section class="release {rec_class}"><div class="release-main"><div class="release-icon">{rec_icon}</div><div><div class="release-title">Release recommendation: {html_escape(recommendation.replace("_", " "))}</div><div class="release-reason">{html_escape(risk['reason'])}</div></div></div><div class="risk-pill">Risk: {html_escape(risk['risk_level'])}</div></section>
+<section class="release {rec_class}"><div class="release-main"><div class="release-icon">{rec_icon}</div><div><div class="release-title">Release recommendation: {html_escape(recommendation.replace("_", " "))}</div><div class="release-reason">{html_escape(risk["reason"])}</div></div></div><div class="risk-pill">Risk: {html_escape(risk["risk_level"])}</div></section>
 <section class="stats"><div class="stat"><div class="stat-value">{metrics.total}</div><div class="stat-label">Total tests</div></div><div class="stat"><div class="stat-value">{metrics.passed}</div><div class="stat-label">Passed</div></div><div class="stat"><div class="stat-value">{metrics.failed + metrics.broken}</div><div class="stat-label">Failed / broken</div></div><div class="stat"><div class="stat-value">{metrics.pass_rate}%</div><div class="stat-label">Pass rate</div></div></section>
-<section id="categories"><h2 class="section-title">Failure Categories</h2><p class="section-subtitle">Select a category to see its failed tests.</p><div class="category-grid">{category_cards}</div></section>
-{''.join(category_sections)}
-{''.join(detail_sections)}
+{category_inputs}{test_inputs}
+<section class="failure-workspace workspace">
+<aside class="pane category-pane"><div class="pane-header"><div class="pane-title">Failure Categories</div><div class="pane-count">5 categories</div></div><div class="pane-body">{category_cards}</div></aside>
+<aside class="pane test-pane">{"".join(panels)}</aside>
+<main class="pane detail-pane">{detail_content}</main>
+</section>
 <div class="footer">Generated by the AI-Powered CI Failure Triage Engine</div>
 </main></div>
-</body>
-</html>'''
+</body></html>'''
 
 
 # ============================================================
