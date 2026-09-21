@@ -1,66 +1,37 @@
 #!/usr/bin/env python3
 """
-AI-Powered CI Failure Triage Engine
-===================================
+CI Failure Triage Script
+=========================
+Reads Allure test results (either raw *-result.json files, or a generated
+report's data/test-cases/*.json files — auto-detected), builds a rich
+per-test evidence dossier (labels, history, retries, exception class), sends
+it to an LLM for structured triage analysis, and renders a Markdown + HTML
+report.
 
-Single-file implementation for Jenkins + Allure CI failure triage.
-
-Pipeline:
-    Jenkins Build
-        -> Data Collection
-        -> Failure Preprocessing
-        -> Correlation Engine
-        -> AI Triage Engine
-        -> Risk Assessment
-        -> Interactive Report Generator
-
-Report UX:
-    Overview -> Category -> Failed Tests -> Test Detail
-
-The HTML report is intentionally concise on first load. Detailed technical
-information is progressively disclosed only when the user drills into a
-category and then a failed test.
-
-Final failure taxonomy (and ONLY these values may appear in the report):
-    1. Application Defect
-    2. Environment Issue
-    3. Test Data Issue
-    4. Script Defect
-    5. Unknown
-
-Environment variables:
-    OPENAI_API_KEY        Required for AI analysis
-    OPENAI_MODEL          Optional; default: gpt-4o
-    JENKINS_USER          Optional, for authenticated Jenkins access
-    JENKINS_API_TOKEN     Optional, for authenticated Jenkins access
+Usage (as run from a Jenkins Post Step):
+    python3 scripts/triage.py \
+        --report-dir target/allure-results \
+        --build-url $BUILD_URL \
+        --output triage-report.md \
+        --html-output triage-report.html
 """
 
 import argparse
-import base64
-import hashlib
 import html
 import json
 import os
 import re
 import sys
 import urllib.request
-from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-
+from openai import OpenAI
 
 # ============================================================
-# 1. CONFIGURATION
+# Fixed taxonomy (validated, never trusted blindly from the model)
 # ============================================================
-
-AI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-MAX_TRACE_LENGTH = 6000
-MAX_CONSOLE_LINES = 300
-MAX_FAILURES_FOR_AI = 100
-MAX_CONSOLE_FOR_AI = 12000
 
 CATEGORIES = [
     "Application Defect",
@@ -69,122 +40,37 @@ CATEGORIES = [
     "Script Defect",
     "Unknown",
 ]
-
 SEVERITIES = ["Critical", "High", "Medium", "Low"]
 CONFIDENCES = ["High", "Medium", "Low"]
 SEVERITY_ORDER = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
-CONFIDENCE_ORDER = {"High": 3, "Medium": 2, "Low": 1}
+OWNERS = ["Application", "QA Automation", "Environment/Infra", "Data", "Unknown"]
+RECOMMENDATIONS = ["GO", "CONDITIONAL_GO", "HOLD", "NO_GO"]
 
-# Safety net for older/internal labels that may still be returned by a model
-# or exist in a previously developed rule set. These values never reach the UI.
-LEGACY_CATEGORY_MAP = {
-    "logic-bug": "Application Defect",
-    "null-safety": "Application Defect",
-    "bounds-check": "Application Defect",
-    "concurrency": "Application Defect",
-    "api-contract": "Application Defect",
-    "assertion": "Application Defect",
-    "business-logic": "Application Defect",
-    "application": "Application Defect",
-    "product-defect": "Application Defect",
-    "timeout": "Environment Issue",
-    "environment": "Environment Issue",
-    "infrastructure": "Environment Issue",
-    "build": "Environment Issue",
-    "dependency": "Environment Issue",
-    "network": "Environment Issue",
-    "ui-locator": "Script Defect",
-    "locator": "Script Defect",
-    "selector": "Script Defect",
-    "automation": "Script Defect",
-    "flaky": "Script Defect",
-    "test-data": "Test Data Issue",
-    "test_data": "Test Data Issue",
-    "data": "Test Data Issue",
-    "unknown": "Unknown",
-}
+MAX_CONSOLE_LINES = 150
 
 
 # ============================================================
-# 2. DATA MODELS
+# Small helpers
 # ============================================================
 
-@dataclass
-class BuildMetadata:
-    build_url: str
-    build_number: str = "N/A"
-    job_name: str = "N/A"
-    pipeline_status: str = "UNKNOWN"
-    timestamp: str = ""
-
-
-@dataclass
-class Failure:
-    name: str
-    status: str
-    message: str
-    trace: str
-    module: str = "Unknown"
-    suite: str = ""
-    feature: str = ""
-    duration_ms: int = 0
-    test_id: str = ""
-    history_id: str = ""
-    exception_type: str = "Unknown"
-    normalized_signature: str = ""
-    fingerprint: str = ""
-    rule_category: str = "Unknown"
-    duplicate_count: int = 1
-
-
-@dataclass
-class FailureCluster:
-    cluster_id: str
-    fingerprint: str
-    failures: List[Failure] = field(default_factory=list)
-    affected_tests: int = 0
-    blast_radius: str = "Low"
-    representative_error: str = ""
-    probable_pattern: str = ""
-
-
-@dataclass
-class BuildMetrics:
-    total: int = 0
-    passed: int = 0
-    failed: int = 0
-    broken: int = 0
-    skipped: int = 0
-
-    @property
-    def pass_rate(self) -> float:
-        return round((self.passed / self.total) * 100, 1) if self.total else 100.0
-
-
-# ============================================================
-# 3. NORMALIZATION / SAFETY HELPERS
-# ============================================================
-
-def safe(value: Any, default: str = "N/A") -> str:
+def safe(value: Any, default: str = "") -> str:
     if value is None:
         return default
-    value = str(value).strip()
-    return value if value else default
+    text = str(value).strip()
+    return text if text else default
+
+
+def esc(value: Any, default: str = "N/A") -> str:
+    return html.escape(safe(value, default) or default, quote=True)
 
 
 def normalize_category(value: Any) -> str:
-    """Return one of the five approved business categories, always."""
-    raw = safe(value, "Unknown").strip()
+    raw = safe(value, "Unknown")
     if raw in CATEGORIES:
         return raw
-
-    key = raw.lower().replace(" ", "-").replace("_", "-")
-    if key in LEGACY_CATEGORY_MAP:
-        return LEGACY_CATEGORY_MAP[key]
-
-    # A few tolerant aliases. Anything else deliberately becomes Unknown.
     aliases = {
         "application defect": "Application Defect",
+        "product defect": "Application Defect",
         "environment issue": "Environment Issue",
         "test data issue": "Test Data Issue",
         "script defect": "Script Defect",
@@ -192,1040 +78,646 @@ def normalize_category(value: Any) -> str:
     return aliases.get(raw.lower(), "Unknown")
 
 
-def normalize_severity(value: Any, default: str = "Medium") -> str:
-    value = safe(value, default).title()
-    return value if value in SEVERITIES else default
+def normalize_choice(value: Any, allowed: List[str], default: str) -> str:
+    raw = safe(value, default).title()
+    return raw if raw in allowed else default
 
 
-def normalize_confidence(value: Any, default: str = "Low") -> str:
-    value = safe(value, default).title()
-    return value if value in CONFIDENCES else default
+def normalize_owner(value: Any) -> str:
+    raw = safe(value, "Unknown")
+    return raw if raw in OWNERS else "Unknown"
 
 
-def compact_text(value: str, limit: int) -> str:
-    value = safe(value, "")
-    if len(value) <= limit:
-        return value
-    return value[: max(0, limit - 3)] + "..."
+def normalize_recommendation(value: Any) -> str:
+    raw = safe(value, "HOLD").upper().replace("-", "_").replace(" ", "_")
+    return raw if raw in RECOMMENDATIONS else "HOLD"
 
 
-def html_escape(value: Any, default: str = "N/A") -> str:
-    return html.escape(safe(value, default), quote=True)
-
-
-def js_json(value: Any) -> str:
-    """Serialize data safely for embedding inside a script tag."""
-    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
-
-
-# ============================================================
-# 4. DATA COLLECTION LAYER
-# ============================================================
-
-def load_allure_results(
-    report_dir: Path,
-    build_start_file: Optional[Path] = None,
-) -> List[Dict[str, Any]]:
-    """Load only Allure results belonging to the current Jenkins build.
-
-    When build_start_file is supplied, only result files whose modification
-    time is at or after the marker timestamp are considered. This prevents
-    stale Allure JSON files from previous builds in a reused Jenkins workspace
-    from contaminating the current build's triage report.
-    """
-    results: List[Dict[str, Any]] = []
-    if not report_dir.exists():
-        return results
-
-    build_start_ts: Optional[float] = None
-    if build_start_file:
-        try:
-            build_start_ts = float(build_start_file.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(
-                f"Invalid or unreadable build start marker {build_start_file}: {exc}"
-            ) from exc
-
-    result_files = sorted(report_dir.glob("*-result.json"))
-    skipped_stale = 0
-
-    for file_path in result_files:
-        try:
-            if build_start_ts is not None and file_path.stat().st_mtime < build_start_ts:
-                skipped_stale += 1
-                continue
-
-            results.append(json.loads(file_path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-            print(
-                f"Warning: skipping unreadable Allure result {file_path.name}: {exc}",
-                file=sys.stderr,
-            )
-
-    if build_start_ts is not None:
-        print(
-            f"      Current-build Allure results={len(results)} "
-            f"(ignored {skipped_stale} stale result file(s))"
-        )
-
-    return results
+def exception_class(message: str, trace: str) -> str:
+    source = f"{message}\n{trace}"
+    match = re.search(r"\b([A-Za-z_][\w.]*(?:Exception|Error|Failure))\b", source)
+    return match.group(1) if match else ""
 
 
 def labels_map(result: Dict[str, Any]) -> Dict[str, List[str]]:
-    output: Dict[str, List[str]] = defaultdict(list)
+    out: Dict[str, List[str]] = defaultdict(list)
     for label in result.get("labels") or []:
-        if label.get("name") and label.get("value") is not None:
-            output[str(label["name"])].append(str(label["value"]))
-    return output
+        name = label.get("name")
+        if name and label.get("value") is not None:
+            out[str(name)].append(str(label["value"]))
+    return out
 
 
 def first_label(labels: Dict[str, List[str]], *names: str) -> str:
     for name in names:
-        values = labels.get(name) or []
-        if values:
-            return values[0]
-    return "Unknown"
-
-
-def extract_module(result: Dict[str, Any]) -> str:
-    labels = labels_map(result)
-    package = first_label(labels, "package")
-    if package != "Unknown" and "." in package:
-        return package.rsplit(".", 1)[0]
-    return first_label(labels, "testClass", "parentSuite", "suite")
-
-
-def extract_suite(result: Dict[str, Any]) -> str:
-    labels = labels_map(result)
-    return first_label(labels, "suite", "parentSuite", "subSuite")
-
-
-def extract_feature(result: Dict[str, Any]) -> str:
-    """Return a real Allure feature/story when one exists; otherwise keep it absent."""
-    labels = labels_map(result)
-    for name in ("feature", "story", "epic"):
         values = labels.get(name) or []
         if values and values[0].strip():
             return values[0].strip()
     return ""
 
 
-def summarize_allure_results(
-    results: List[Dict[str, Any]],
-) -> tuple[BuildMetrics, List[Failure]]:
-    metrics = BuildMetrics()
-    failures: List[Failure] = []
-
-    for result in results:
-        status = str(result.get("status") or "").lower()
-        if not status:
-            continue
-
-        metrics.total += 1
-        if status == "passed":
-            metrics.passed += 1
-        elif status == "failed":
-            metrics.failed += 1
-        elif status == "broken":
-            metrics.broken += 1
-        elif status in {"skipped", "unknown"}:
-            metrics.skipped += 1
-
-        if status not in {"failed", "broken"}:
-            continue
-
-        details = result.get("statusDetails") or {}
-        labels = labels_map(result)
-        failures.append(
-            Failure(
-                name=str(result.get("fullName") or result.get("name") or "Unnamed Test"),
-                status=status,
-                message=str(details.get("message") or ""),
-                trace=str(details.get("trace") or "")[:MAX_TRACE_LENGTH],
-                module=extract_module(result),
-                suite=extract_suite(result),
-                feature=extract_feature(result),
-                duration_ms=int(result.get("duration") or 0),
-                test_id=str(result.get("uuid") or ""),
-                history_id=str(result.get("historyId") or ""),
-            )
-        )
-
-    return metrics, failures
+def extract_module(labels: Dict[str, List[str]]) -> str:
+    package = first_label(labels, "package")
+    if package and "." in package:
+        return package.rsplit(".", 1)[0]
+    return first_label(labels, "testClass", "parentSuite", "suite") or "Unknown"
 
 
-def fetch_console_log(build_url: str, max_lines: int = MAX_CONSOLE_LINES) -> str:
-    if not build_url:
-        return ""
+def count_attachments(node: Any) -> int:
+    count = 0
+    if isinstance(node, list):
+        for item in node:
+            count += count_attachments(item)
+        return count
+    if not isinstance(node, dict):
+        return 0
+    count += len(node.get("attachments") or [])
+    for key in ("steps", "beforeStages", "afterStages"):
+        count += count_attachments(node.get(key))
+    count += count_attachments(node.get("testStage"))
+    return count
 
-    request = urllib.request.Request(build_url.rstrip("/") + "/consoleText")
-    user = os.getenv("JENKINS_USER")
-    token = os.getenv("JENKINS_API_TOKEN")
 
-    if user and token:
-        credentials = base64.b64encode(f"{user}:{token}".encode()).decode()
-        request.add_header("Authorization", f"Basic {credentials}")
+def summarize_history(extra: Dict[str, Any], case: Dict[str, Any]) -> Dict[str, Any]:
+    history = (extra or {}).get("history") or {}
+    statistic = history.get("statistic") or {}
+    items = history.get("items") or []
+    recent = [safe(item.get("status")).lower() for item in items if isinstance(item, dict)]
+    current_failed = safe(case.get("status")).lower() in {"failed", "broken"}
+    consecutive = 0
+    if current_failed:
+        consecutive = 1
+        for status in recent:
+            if status in {"failed", "broken"}:
+                consecutive += 1
+            else:
+                break
+    total_runs = int(statistic.get("total") or len(items) or 0)
+    bad_runs = int(statistic.get("failed") or 0) + int(statistic.get("broken") or 0)
+    return {
+        "total_runs": total_runs,
+        "bad_runs": bad_runs,
+        "consecutive_failures": consecutive,
+        "flaky": bool(case.get("flaky")),
+        "new_failed": bool(case.get("newFailed")),
+        "new_broken": bool(case.get("newBroken")),
+    }
 
+
+def retry_info(extra: Dict[str, Any], message: str) -> Tuple[bool, bool]:
+    retries = (extra or {}).get("retries") or []
+    if not retries:
+        return False, False
+    first = retries[0] if isinstance(retries[0], dict) else {}
+    details = safe(first.get("statusDetails") or first.get("statusMessage"))
+    same = bool(details) and details.strip() == (message or "").strip()
+    return True, same
+
+
+def existing_allure_category(extra: Dict[str, Any]) -> str:
+    categories = (extra or {}).get("categories") or []
+    if categories and isinstance(categories[0], dict):
+        return safe(categories[0].get("name"))
+    return ""
+
+
+# ============================================================
+# Dual-format Allure parsing: generated-report test-cases/*.json,
+# or raw *-result.json — auto-detected, whichever is present.
+# ============================================================
+
+def load_json(path: Path) -> Optional[Dict[str, Any]]:
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            text = response.read().decode("utf-8", errors="replace")
-        return "\n".join(text.splitlines()[-max_lines:])
-    except Exception as exc:
-        detail = str(exc)
-        if "403" in detail:
-            print(
-                "Warning: Jenkins console log access returned HTTP 403. "
-                "Set JENKINS_USER and JENKINS_API_TOKEN (or Jenkins credentials "
-                "binding) if console-log context is required. Continuing without it.",
-                file=sys.stderr,
-            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        print(f"Warning: skipping unreadable file {path.name}: {exc}", file=sys.stderr)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def dossier_from_report_case(case: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    status = safe(case.get("status")).lower()
+    if not status:
+        return None
+    extra = case.get("extra") or {}
+    labels = labels_map(case)
+    message = safe(case.get("statusMessage"))
+    trace = safe(case.get("statusTrace"))
+    retried, retry_same = retry_info(extra, message)
+    return {
+        "test_name": safe(case.get("name") or case.get("fullName"), "Unnamed Test"),
+        "status": status,
+        "suite": first_label(labels, "suite", "parentSuite", "subSuite"),
+        "feature": first_label(labels, "feature", "story", "epic"),
+        "module": extract_module(labels),
+        "message": message,
+        "trace": trace[:3000],
+        "exception_class": exception_class(message, trace),
+        "history": summarize_history(extra, case),
+        "retried": retried,
+        "retry_same_error": retry_same,
+        "existing_allure_category": existing_allure_category(extra),
+        "attachments_count": count_attachments(case),
+    }
+
+
+def dossier_from_raw_result(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    status = safe(result.get("status")).lower()
+    if not status:
+        return None
+    details = result.get("statusDetails") or {}
+    labels = labels_map(result)
+    message = safe(details.get("message"))
+    trace = safe(details.get("trace"))
+    return {
+        "test_name": safe(result.get("name") or result.get("fullName"), "Unnamed Test"),
+        "status": status,
+        "suite": first_label(labels, "suite", "parentSuite", "subSuite"),
+        "feature": first_label(labels, "feature", "story", "epic"),
+        "module": extract_module(labels),
+        "message": message,
+        "trace": trace[:3000],
+        "exception_class": exception_class(message, trace),
+        "history": summarize_history({}, result),
+        "retried": False,
+        "retry_same_error": False,
+        "existing_allure_category": "",
+        "attachments_count": count_attachments(result),
+    }
+
+
+def collect_tests(report_dir: Path) -> Tuple[List[Dict[str, Any]], str]:
+    """Auto-detects generated-report format (data/test-cases/*.json) vs raw
+    Allure results (*-result.json) under report_dir, parses whichever is found."""
+    case_dirs = [d for d in report_dir.rglob("test-cases") if d.is_dir()]
+    if case_dirs:
+        tests = []
+        for case_dir in case_dirs:
+            for file_path in sorted(case_dir.glob("*.json")):
+                case = load_json(file_path)
+                if not case:
+                    continue
+                record = dossier_from_report_case(case)
+                if record and not case.get("retry"):
+                    tests.append(record)
+        if tests:
+            return tests, "allure-report"
+
+    raw = []
+    for file_path in sorted(report_dir.rglob("*-result.json")):
+        result = load_json(file_path)
+        if not result:
+            continue
+        record = dossier_from_raw_result(result)
+        if record:
+            raw.append(record)
+    return raw, "allure-results"
+
+
+def compute_metrics(tests: List[Dict[str, Any]]) -> Dict[str, Any]:
+    m = {"total": 0, "passed": 0, "failed": 0, "broken": 0, "skipped": 0}
+    for t in tests:
+        m["total"] += 1
+        status = t["status"]
+        if status == "passed":
+            m["passed"] += 1
+        elif status == "failed":
+            m["failed"] += 1
+        elif status == "broken":
+            m["broken"] += 1
         else:
-            print(f"Warning: unable to fetch Jenkins console log: {exc}", file=sys.stderr)
+            m["skipped"] += 1
+    m["pass_rate"] = round((m["passed"] / m["total"]) * 100, 1) if m["total"] else 100.0
+    return m
+
+
+# ============================================================
+# Console log fallback (build-level failures with no test data at all)
+# ============================================================
+
+def fetch_console_log_tail(build_url: str, max_lines: int = MAX_CONSOLE_LINES) -> str:
+    url = build_url.rstrip("/") + "/consoleText"
+    try:
+        req = urllib.request.Request(url)
+        user = os.environ.get("JENKINS_USER")
+        token = os.environ.get("JENKINS_API_TOKEN")
+        if user and token:
+            import base64
+            creds = base64.b64encode(f"{user}:{token}".encode()).decode()
+            req.add_header("Authorization", f"Basic {creds}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        return "\n".join(text.splitlines()[-max_lines:])
+    except Exception as e:
+        print(f"Warning: could not fetch console log ({e})", file=sys.stderr)
         return ""
 
 
-def collect_build_metadata(build_url: str, console_log: str) -> BuildMetadata:
-    env_status = os.getenv("BUILD_RESULT", "").upper()
-    console_upper = console_log.upper()
-    status = env_status or "UNKNOWN"
-
-    if "BUILD FAILURE" in console_upper:
-        status = "FAILURE"
-    elif "BUILD SUCCESS" in console_upper:
-        status = "SUCCESS"
-
-    return BuildMetadata(
-        build_url=build_url,
-        build_number=os.getenv("BUILD_NUMBER", "N/A"),
-        job_name=os.getenv("JOB_NAME", "N/A"),
-        pipeline_status=status,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-    )
-
-
 # ============================================================
-# 5. FAILURE PREPROCESSING LAYER
+# LLM call — structured JSON output, validated against fixed taxonomy
 # ============================================================
 
-def extract_exception_type(message: str, trace: str) -> str:
-    source = f"{message}\n{trace}"
-    patterns = [
-        r"\b([A-Za-z_][A-Za-z0-9_]*(?:Exception|Error|Failure))\b",
-        r"\b(AssertionError)\b",
-    ]
-    for pattern in patterns:
-        matches = re.findall(pattern, source)
-        if matches:
-            return matches[-1]
-    return "Unknown"
+TRIAGE_SYSTEM_PROMPT = """You are a Principal QA Engineer performing a formal triage review of a
+CI build's failing tests. Respond with ONLY a single JSON object (no prose, no markdown fences)
+matching exactly this schema:
 
-
-def normalize_failure_text(text: str) -> str:
-    if not text:
-        return ""
-    normalized = text.lower()
-    normalized = re.sub(r"https?://[^\s]+", "<url>", normalized)
-    normalized = re.sub(
-        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
-        "<uuid>", normalized, flags=re.IGNORECASE,
-    )
-    normalized = re.sub(
-        r"\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?z?\b",
-        "<timestamp>", normalized,
-    )
-    normalized = re.sub(r"0x[0-9a-f]+", "<hex>", normalized)
-    normalized = re.sub(r":\d+\)", ":<line>)", normalized)
-    normalized = re.sub(r"\b\d+\b", "<num>", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return normalized
-
-
-def generate_fingerprint(message: str, trace: str, exception_type: str) -> tuple[str, str]:
-    primary = message.strip() or trace.strip() or "no failure message"
-    normalized = normalize_failure_text(primary)
-    if exception_type and exception_type != "Unknown":
-        normalized = f"{exception_type}|{normalized}"
-    normalized = normalized[:1500]
-    fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-    return normalized, fingerprint
-
-
-def classify_failure_rules(message: str, trace: str, exception_type: str) -> str:
-    """Conservative deterministic classifier used as AI evidence."""
-    source = f"{message} {trace} {exception_type}".lower()
-
-    test_data_keywords = [
-        "test data", "testdata", "fixture", "dataset", "seed data",
-        "missing data", "invalid data", "duplicate data", "duplicate key",
-        "data not found", "record not found", "no data available",
-        "invalid input data", "data setup", "precondition data",
-        "unique constraint", "foreign key constraint", "expected record not found",
-    ]
-    environment_keywords = [
-        "connection refused", "unknown host", "unknownhostexception", "dns",
-        "certificate", "ssl", "tls", "unable to connect", "service unavailable",
-        "agent offline", "workspace", "disk space", "out of memory",
-        "outofmemoryerror", "docker", "kubernetes", "node lost",
-        "compilation failure", "could not resolve dependencies", "dependency resolution",
-        "network is unreachable", "connection reset", "sockettimeout", "read timed out",
-        "connection timed out", "host unreachable", "502 bad gateway", "503 service unavailable",
-    ]
-    script_keywords = [
-        "nosuchelementexception", "elementnotfound", "unable to locate",
-        "locator", "selector", "staleelementreference", "webelement",
-        "invalid selector", "element click intercepted", "test script",
-        "automation script", "page object", "assertion in test", "test automation",
-    ]
-    application_keywords = [
-        "nullpointerexception", "cannot invoke", " is null", "none type",
-        "indexoutofboundsexception", "arrayindexoutofboundsexception",
-        "stringindexoutofboundsexception", "concurrentmodificationexception",
-        "deadlock", "race condition", "unexpected status", "http status",
-        "status code", "schema validation", "response body", "contract violation",
-        "business rule", "internal server error", "500 internal", "application error",
-        "incorrect response", "unexpected response", "wrong business result",
-    ]
-
-    if any(k in source for k in test_data_keywords):
-        return "Test Data Issue"
-    if any(k in source for k in environment_keywords):
-        return "Environment Issue"
-    if any(k in source for k in script_keywords):
-        return "Script Defect"
-    if any(k in source for k in application_keywords):
-        return "Application Defect"
-    return "Unknown"
-
-
-def preprocess_failures(failures: List[Failure]) -> List[Failure]:
-    fingerprint_counts = Counter()
-    for failure in failures:
-        failure.exception_type = extract_exception_type(failure.message, failure.trace)
-        signature, fingerprint = generate_fingerprint(
-            failure.message, failure.trace, failure.exception_type
-        )
-        failure.normalized_signature = signature
-        failure.fingerprint = fingerprint
-        failure.rule_category = normalize_category(
-            classify_failure_rules(failure.message, failure.trace, failure.exception_type)
-        )
-        fingerprint_counts[fingerprint] += 1
-
-    for failure in failures:
-        failure.duplicate_count = fingerprint_counts[failure.fingerprint]
-    return failures
-
-
-# ============================================================
-# 6. CORRELATION ENGINE
-# ============================================================
-
-def determine_blast_radius(count: int, total_failures: int) -> str:
-    if count >= 10 or (total_failures and count / total_failures >= 0.5):
-        return "High"
-    if count >= 3:
-        return "Medium"
-    return "Low"
-
-
-def detect_common_pattern(failures: List[Failure]) -> str:
-    exceptions = Counter(
-        f.exception_type for f in failures if f.exception_type != "Unknown"
-    )
-    exception = exceptions.most_common(1)[0][0] if exceptions else ""
-    category = Counter(f.rule_category for f in failures).most_common(1)
-    category_name = category[0][0] if category else "Unknown"
-    if exception:
-        return f"Recurring {exception} pattern"
-    return f"Shared {category_name} failure pattern"
-
-
-def cluster_failures(failures: List[Failure]) -> List[FailureCluster]:
-    grouped: Dict[str, List[Failure]] = defaultdict(list)
-    for failure in failures:
-        grouped[failure.fingerprint].append(failure)
-
-    clusters: List[FailureCluster] = []
-    ordered = sorted(grouped.items(), key=lambda item: len(item[1]), reverse=True)
-    for index, (fingerprint, grouped_failures) in enumerate(ordered, start=1):
-        representative = grouped_failures[0]
-        clusters.append(
-            FailureCluster(
-                cluster_id=f"CL-{index:02d}",
-                fingerprint=fingerprint,
-                failures=grouped_failures,
-                affected_tests=len(grouped_failures),
-                blast_radius=determine_blast_radius(len(grouped_failures), len(failures)),
-                representative_error=representative.message or representative.trace[:400],
-                probable_pattern=detect_common_pattern(grouped_failures),
-            )
-        )
-    return clusters
-
-
-def console_pipeline_signals(console_log: str) -> List[str]:
-    if not console_log:
-        return []
-    patterns = [
-        (r"COMPILATION FAILURE", "Compilation failure detected"),
-        (r"Could not resolve dependencies", "Dependency resolution failure detected"),
-        (r"OutOfMemoryError", "Out-of-memory signal detected"),
-        (r"Connection refused", "Connectivity failure signal detected"),
-        (r"BUILD FAILURE", "Build failure marker detected"),
-        (r"ERROR.*Exception", "Unhandled exception signal detected"),
-    ]
-    return [label for pattern, label in patterns if re.search(pattern, console_log, re.I)]
-
-
-# ============================================================
-# 7. AI TRIAGE ENGINE
-# ============================================================
-
-TRIAGE_SYSTEM_PROMPT = """
-You are a Principal QA Engineer performing evidence-based CI failure triage.
-
-Your job is NOT to write a long report. Your job is to produce concise, structured
-triage findings for each failed/broken test so a UI can progressively disclose detail.
-
-STRICT RULES:
-1. Return JSON only.
-2. Never invent files, line numbers, APIs, deployments, incidents, test steps, or facts.
-3. A root cause is a hypothesis unless the supplied evidence directly proves it.
-4. If evidence is insufficient, say "Insufficient evidence" and use Unknown when appropriate.
-5. Use ONLY these five categories, with exact spelling:
-   - Application Defect
-   - Environment Issue
-   - Test Data Issue
-   - Script Defect
-   - Unknown
-6. Do not use any technical/internal category names such as logic-bug, ui-locator,
-   concurrency, timeout, api-contract, null-safety, flaky, infrastructure, etc.
-7. Severity: Critical, High, Medium, Low. Base it on likely impact, not merely exception type.
-8. Confidence: High, Medium, Low. High requires strong evidence.
-9. Suggested fixes must be actionable but must not pretend that unavailable source code was inspected.
-10. Evidence must be grounded in the supplied test message, stack trace, metadata, or console evidence.
-11. Keep each field concise. Prefer 1-3 sentences per field.
-12. Return one finding for every supplied failed/broken test. Preserve the exact test_name.
-13. cluster_id must be one of the supplied cluster IDs.
-14. If multiple tests share a fingerprint, their findings may share the same cluster_id and
-    should reflect the common failure pattern where supported.
-
-JSON schema:
 {
-  "release_assessment": {
-    "recommendation": "GO|CONDITIONAL_GO|HOLD|NO_GO",
-    "risk_level": "Critical|High|Medium|Low",
-    "reason": "short reason"
-  },
+  "executive_summary": "2-4 sentences: overall build health, dominant failure theme, whether
+    failures look release-blocking",
+  "release_recommendation": "one of GO, CONDITIONAL_GO, HOLD, NO_GO",
+  "correlation_notes": "explicit reasoning about which failures likely share a root cause versus
+    are independent/unrelated. Say so plainly either way; never assume correlation without
+    evidence.",
   "findings": [
     {
-      "test_name": "exact supplied test name",
-      "cluster_id": "CL-01",
-      "category": "Application Defect|Environment Issue|Test Data Issue|Script Defect|Unknown",
-      "severity": "Critical|High|Medium|Low",
-      "confidence": "High|Medium|Low",
-      "root_cause": "concise evidence-based hypothesis",
-      "evidence": "specific evidence from input",
-      "suggested_fix": "concise actionable fix",
-      "recommended_action": "what the team should do next",
-      "suggested_owner": "Application|QA Automation|QA|DevOps|Data|Engineering|Unknown"
+      "test_name": "must exactly match a test name given in the input",
+      "category": "one of: Application Defect, Environment Issue, Test Data Issue, Script Defect, Unknown",
+      "severity": "one of: Critical, High, Medium, Low — based on likely user/business impact",
+      "confidence": "one of: High, Medium, Low",
+      "root_cause": "specific, evidence-based hypothesis citing the actual error/message given",
+      "evidence": "a short quote or paraphrase of the specific error text supporting the hypothesis",
+      "suggested_fix": "concrete, technical, actionable — not generic advice",
+      "suggested_owner": "one of: Application, QA Automation, Environment/Infra, Data, Unknown"
     }
   ]
 }
-"""
+
+Category definitions:
+- Application Defect: a genuine bug in the product/application code being tested.
+- Environment Issue: failure caused by the test environment itself (config, connectivity,
+  infra, service availability) rather than the application or the test.
+- Test Data Issue: failure caused by missing/invalid/stale test data or fixtures.
+- Script Defect: failure caused by a bug in the test automation script/locator/logic itself,
+  not the application under test.
+- Unknown: insufficient evidence to confidently assign one of the above.
+
+When "history" data is provided for a test (total_runs, bad_runs, consecutive_failures), weight
+it heavily: a test that has failed with the same message across many recent runs is a chronic,
+well-understood issue — usually higher confidence, though not necessarily lower severity. A test
+with no failure history, or a message that differs from its usual pattern, is more likely a fresh
+regression and deserves closer scrutiny. If an "existing_allure_category" tag is present, treat it
+as a strong hint (the client's own QA team already classified it) but still apply your own
+judgment against the 5 fixed categories above — do not just copy it verbatim if it doesn't fit.
+
+Never invent details, file names, or line numbers not present in the input. If evidence is
+insufficient for a confident root cause, say so explicitly and set confidence to Low rather than
+guessing."""
 
 
-def build_ai_payload(
-    metadata: BuildMetadata,
-    metrics: BuildMetrics,
-    failures: List[Failure],
-    clusters: List[FailureCluster],
-    console_log: str,
-) -> Dict[str, Any]:
-    limited_failures = failures[:MAX_FAILURES_FOR_AI]
-    return {
-        "build": asdict(metadata),
-        "metrics": asdict(metrics),
-        "pipeline_signals": console_pipeline_signals(console_log),
-        "clusters": [
-            {
-                "cluster_id": cluster.cluster_id,
-                "affected_tests": cluster.affected_tests,
-                "blast_radius": cluster.blast_radius,
-                "pattern": cluster.probable_pattern,
-                "tests": [f.name for f in cluster.failures[:30]],
-            }
-            for cluster in clusters
+def build_user_prompt(tests: List[Dict[str, Any]], build_url: str, metrics: Dict[str, Any],
+                       console_tail: str) -> str:
+    failures = [t for t in tests if t["status"] in ("failed", "broken")]
+    parts = [
+        f"Build: {build_url}",
+        f"Total tests: {metrics['total']}, Passed: {metrics['passed']}, "
+        f"Failed/broken: {metrics['failed'] + metrics['broken']}, Skipped: {metrics['skipped']}",
+        "",
+    ]
+    for t in failures:
+        parts.append(f"### {t['test_name']}")
+        parts.append(f"Status: {t['status']}")
+        if t["module"]:
+            parts.append(f"Module: {t['module']}")
+        if t["feature"] or t["suite"]:
+            parts.append(f"Feature/Suite: {t['feature']} / {t['suite']}")
+        parts.append(f"Message: {t['message']}")
+        if t["exception_class"]:
+            parts.append(f"Exception class: {t['exception_class']}")
+        h = t["history"]
+        if h["total_runs"] > 0:
+            parts.append(
+                f"History: failed/broken in {h['bad_runs']} of the last {h['total_runs']} runs "
+                f"of this test; {h['consecutive_failures']} consecutive failure(s) including this one."
+            )
+        if t["retried"]:
+            parts.append(f"Retried this run: yes, same error on retry: {t['retry_same_error']}")
+        if t["existing_allure_category"]:
+            parts.append(f"existing_allure_category: {t['existing_allure_category']}")
+        if t["attachments_count"]:
+            parts.append(f"({t['attachments_count']} attachment(s)/screenshot(s) captured, see Allure report)")
+        parts.append(f"Trace:\n{t['trace']}")
+        parts.append("")
+    if console_tail:
+        parts.append("### Console log (tail, for extra context)")
+        parts.append(f"```\n{console_tail}\n```")
+    return "\n".join(parts)
+
+
+def call_openai(prompt: str) -> Dict[str, Any]:
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=4000,
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ],
-        "failed_tests": [
-            {
-                "test_name": f.name,
-                "status": f.status,
-                "module": f.module,
-                "suite": f.suite,
-                "feature": f.feature,
-                "duration_ms": f.duration_ms,
-                "message": compact_text(f.message, 2000),
-                "stack_trace": compact_text(f.trace, 4000),
-                "exception_type": f.exception_type,
-                "rule_based_category": f.rule_category,
-                "fingerprint": f.fingerprint,
-            }
-            for f in limited_failures
-        ],
-        "console_log_tail": console_log[-MAX_CONSOLE_FOR_AI:] if console_log else "",
-    }
-
-
-def extract_json(text: str) -> Dict[str, Any]:
-    cleaned = (text or "").strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start < 0 or end < 0:
-        raise ValueError("AI response did not contain a JSON object")
-    return json.loads(cleaned[start:end + 1])
-
-
-def default_finding(failure: Failure, cluster: Optional[FailureCluster] = None) -> Dict[str, Any]:
-    severity = "High" if cluster and cluster.blast_radius == "High" else (
-        "Medium" if cluster and cluster.affected_tests > 1 else "Low"
     )
-    return {
-        "test_name": failure.name,
-        "cluster_id": cluster.cluster_id if cluster else "",
-        "category": normalize_category(failure.rule_category),
-        "severity": severity,
-        "confidence": "Low",
-        "root_cause": "Insufficient evidence to establish a confirmed root cause.",
-        "evidence": compact_text(
-            failure.message or failure.trace or "No detailed failure evidence was available.",
-            900,
-        ),
-        "suggested_fix": "Reproduce the failure and review the available error evidence before applying a code or environment change.",
-        "recommended_action": "Investigate the failure with the owning engineering or QA team.",
-        "suggested_owner": "Unknown",
-    }
+    raw = response.choices[0].message.content
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"executive_summary": raw, "release_recommendation": "HOLD",
+                "correlation_notes": "", "findings": []}
 
 
-def fallback_analysis(
-    failures: List[Failure],
-    clusters: List[FailureCluster],
-) -> Dict[str, Any]:
-    cluster_by_fp = {c.fingerprint: c for c in clusters}
-    findings = [default_finding(f, cluster_by_fp.get(f.fingerprint)) for f in failures]
+def normalize_analysis(analysis: Dict[str, Any], tests: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Validate every AI-supplied field against our fixed taxonomy — a category, severity,
+    confidence, or owner can never drift from the allowed lists, regardless of what the model
+    returned."""
+    by_name = {t["test_name"]: t for t in tests}
+    findings = []
+    for item in analysis.get("findings") or []:
+        if not isinstance(item, dict):
+            continue
+        name = safe(item.get("test_name"))
+        test = by_name.get(name, {})
+        findings.append({
+            "test_name": name or "Unknown test",
+            "module": test.get("module", ""),
+            "category": normalize_category(item.get("category")),
+            "severity": normalize_choice(item.get("severity"), SEVERITIES, "Medium"),
+            "confidence": normalize_choice(item.get("confidence"), CONFIDENCES, "Medium"),
+            "root_cause": safe(item.get("root_cause"), "Insufficient evidence for a confirmed root cause."),
+            "evidence": safe(item.get("evidence"), "No supporting evidence provided."),
+            "suggested_fix": safe(item.get("suggested_fix"), "Reproduce the failure before applying a change."),
+            "suggested_owner": normalize_owner(item.get("suggested_owner")),
+        })
+    highest = max((SEVERITY_ORDER[f["severity"]] for f in findings), default=1)
+    highest_severity = next((s for s, v in SEVERITY_ORDER.items() if v == highest), "Low")
+    recommendation = normalize_recommendation(analysis.get("release_recommendation"))
+    if highest_severity == "Critical":
+        recommendation = "NO_GO"
     return {
-        "release_assessment": {
-            "recommendation": "HOLD" if failures else "GO",
-            "risk_level": "High" if failures else "Low",
-            "reason": (
-                "Automated AI analysis was unavailable; review failure evidence before release."
-                if failures else "No failing or broken tests were detected."
-            ),
-        },
+        "executive_summary": safe(analysis.get("executive_summary"), "No summary provided."),
+        "recommendation": recommendation,
+        "highest_severity": highest_severity,
+        "correlation_notes": safe(analysis.get("correlation_notes"), "No correlation notes provided."),
         "findings": findings,
     }
 
 
-def perform_ai_triage(
-    metadata: BuildMetadata,
-    metrics: BuildMetrics,
-    failures: List[Failure],
-    clusters: List[FailureCluster],
-    console_log: str,
-) -> Dict[str, Any]:
-    if not failures:
-        return {
-            "release_assessment": {
-                "recommendation": "GO",
-                "risk_level": "Low",
-                "reason": "No failing or broken tests were detected in the collected Allure results.",
-            },
-            "findings": [],
-        }
-
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Warning: OPENAI_API_KEY is not set. Using deterministic fallback.", file=sys.stderr)
-        return fallback_analysis(failures, clusters)
-
-    payload = build_ai_payload(metadata, metrics, failures, clusters, console_log)
-
-    try:
-        from openai import OpenAI
-        client = OpenAI()
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            temperature=0.1,
-            max_tokens=9000,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": "Analyze this CI evidence and return the required JSON:\n\n"
-                    + json.dumps(payload, ensure_ascii=False, indent=2),
-                },
-            ],
-        )
-        content = response.choices[0].message.content or ""
-        return extract_json(content)
-    except Exception as exc:
-        print(f"Warning: AI analysis unavailable ({exc}). Using deterministic fallback.", file=sys.stderr)
-        return fallback_analysis(failures, clusters)
-
-
 # ============================================================
-# 8. FINAL ANALYSIS VALIDATION / ENRICHMENT
+# Report rendering
 # ============================================================
 
-def build_validated_findings(
-    failures: List[Failure],
-    clusters: List[FailureCluster],
-    analysis: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """Make the UI data complete and enforce the five-category contract."""
-    failure_by_name: Dict[str, Failure] = {f.name: f for f in failures}
-    cluster_by_id = {c.cluster_id: c for c in clusters}
-    ai_by_name: Dict[str, Dict[str, Any]] = {}
+MD_TEMPLATE = """# CI Triage Report
 
-    for item in analysis.get("findings") or []:
-        if not isinstance(item, dict):
-            continue
-        name = safe(item.get("test_name"), "")
-        if name:
-            ai_by_name[name] = item
+**Build:** {build_url}
+**Release recommendation:** {recommendation}
+**Overall risk:** {highest_severity}
 
-    validated: List[Dict[str, Any]] = []
-    for failure in failures:
-        ai = ai_by_name.get(failure.name, {})
-        cluster = cluster_by_id.get(safe(ai.get("cluster_id"), ""))
-        if cluster is None:
-            cluster = next((c for c in clusters if failure in c.failures), None)
+## Executive Summary
 
-        base = default_finding(failure, cluster)
-        finding = {
-            "test_name": failure.name,
-            "test_id": failure.test_id,
-            "history_id": failure.history_id,
-            "status": failure.status.upper(),
-            "module": failure.module,
-            "suite": failure.suite,
-            "feature": failure.feature,
-            "duration_ms": failure.duration_ms,
-            "exception_type": failure.exception_type,
-            "failure_message": failure.message,
-            "stack_trace": failure.trace,
-            "fingerprint": failure.fingerprint,
-            "duplicate_count": failure.duplicate_count,
-            "cluster_id": safe(ai.get("cluster_id"), base["cluster_id"]),
-            "failure_pattern": (
-                cluster.probable_pattern
-                if cluster is not None and cluster.probable_pattern
-                else "Individual failure pattern"
-            ),
-            "category": normalize_category(ai.get("category", base["category"])),
-            "severity": normalize_severity(ai.get("severity", base["severity"]), base["severity"]),
-            "confidence": normalize_confidence(ai.get("confidence", base["confidence"]), base["confidence"]),
-            "root_cause": safe(ai.get("root_cause"), base["root_cause"]),
-            "evidence": safe(ai.get("evidence"), base["evidence"]),
-            "suggested_fix": safe(ai.get("suggested_fix"), base["suggested_fix"]),
-            "recommended_action": safe(ai.get("recommended_action"), base["recommended_action"]),
-            "suggested_owner": safe(ai.get("suggested_owner"), base["suggested_owner"]),
-        }
-        validated.append(finding)
+{executive_summary}
 
-    # Defensive final pass: no arbitrary category can enter the report.
-    for finding in validated:
-        finding["category"] = normalize_category(finding.get("category"))
+## Failure Overview
 
-    return validated
+| Test | Category | Severity | Confidence | Cause |
+|---|---|---|---|---|
+{failure_rows}
 
+## Correlation Analysis
 
-# ============================================================
-# 9. RISK ASSESSMENT
-# ============================================================
+{correlation_notes}
 
-def normalize_recommendation(value: Any) -> str:
-    normalized = safe(value, "HOLD").upper().replace("-", "_").replace(" ", "_")
-    return normalized if normalized in {"GO", "CONDITIONAL_GO", "HOLD", "NO_GO"} else "HOLD"
+## Detailed Findings
 
-
-def assess_risk(
-    analysis: Dict[str, Any],
-    findings: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    release = analysis.get("release_assessment") or {}
-    recommendation = normalize_recommendation(release.get("recommendation"))
-
-    highest_severity = max(
-        (normalize_severity(f.get("severity")) for f in findings),
-        key=lambda x: SEVERITY_ORDER.get(x, 1),
-        default="Low",
-    )
-    largest_cluster = max(Counter(f.get("cluster_id") for f in findings).values(), default=0)
-
-    risk_level = normalize_severity(release.get("risk_level"), "Low")
-    if SEVERITY_ORDER[highest_severity] > SEVERITY_ORDER[risk_level]:
-        risk_level = highest_severity
-
-    # Deterministic safety guardrails. The AI cannot override these into an unsafe GO.
-    if highest_severity == "Critical":
-        recommendation = "NO_GO"
-        risk_level = "Critical"
-    elif highest_severity == "High" and largest_cluster >= 3:
-        recommendation = "HOLD" if recommendation == "GO" else recommendation
-        risk_level = "High"
-    elif findings and recommendation == "GO":
-        recommendation = "CONDITIONAL_GO"
-
-    return {
-        "recommendation": recommendation,
-        "risk_level": risk_level,
-        "reason": safe(
-            release.get("reason"),
-            "Release assessment is based on failure severity and correlated impact.",
-        ),
-        "highest_severity": highest_severity,
-        "affected_failures": len(findings),
-        "largest_cluster": largest_cluster,
-    }
-
-
-# ============================================================
-# 10. CONCISE MARKDOWN REPORT
-# ============================================================
-
-def generate_markdown_report(
-    metadata: BuildMetadata,
-    metrics: BuildMetrics,
-    findings: List[Dict[str, Any]],
-    risk: Dict[str, Any],
-) -> str:
-    category_counts = Counter(f["category"] for f in findings)
-    lines = [
-        "# CI Failure Triage Report",
-        "",
-        f"**Job:** {metadata.job_name}",
-        f"**Build:** {metadata.build_number}",
-        f"**Pipeline:** {metadata.pipeline_status}",
-        f"**Generated:** {metadata.timestamp}",
-        "",
-        f"**Tests:** {metrics.total}  |  **Passed:** {metrics.passed}  |  **Failed:** {metrics.failed + metrics.broken}  |  **Pass Rate:** {metrics.pass_rate}%",
-        f"**Release Assessment:** {risk['recommendation']}  |  **Risk:** {risk['risk_level']}",
-        "",
-        "## Failure Categories",
-        "",
-    ]
-    for category in CATEGORIES:
-        lines.append(f"- **{category}:** {category_counts.get(category, 0)}")
-
-    lines.extend(["", "## Failed Tests", ""])
-    if not findings:
-        lines.append("No failed or broken tests detected.")
-    else:
-        for category in CATEGORIES:
-            category_findings = [f for f in findings if f["category"] == category]
-            if not category_findings:
-                continue
-            lines.extend([f"### {category}", ""])
-            for finding in category_findings:
-                lines.extend([
-                    f"#### {finding['test_name']}",
-                    f"- **Severity:** {finding['severity']}",
-                    f"- **Root Cause:** {finding['root_cause']}",
-                    f"- **Suggested Fix:** {finding['suggested_fix']}",
-                    "",
-                ])
-    return "\n".join(lines)
-
-
-
-def finding_category_map(findings: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """Group validated findings by the five approved user-facing categories."""
-    grouped: Dict[str, List[Dict[str, Any]]] = {category: [] for category in CATEGORIES}
-    for finding in findings:
-        category = normalize_category(finding.get("category"))
-        finding["category"] = category
-        grouped[category].append(finding)
-    return grouped
-
-
-# ============================================================
-# 11. INTERACTIVE HTML DASHBOARD
-# ============================================================
-
-CSS = r"""
-:root{--bg:#f7f8fb;--surface:#ffffff;--surface-alt:#fbfcfe;--text:#24324a;--strong:#10213b;--muted:#718096;--faint:#9aa6b7;--border:#e3e8ef;--border-strong:#d5dce6;--primary:#1f5fbf;--primary-dark:#174a99;--primary-soft:#eef4fc;--danger:#c53030;--danger-soft:#fff4f4;--warning:#a15c00;--warning-soft:#fff8ed;--success:#237a4b;--success-soft:#edf8f1;--shadow:0 1px 2px rgba(16,33,59,.03),0 6px 22px rgba(16,33,59,.05);--shadow-open:0 10px 30px rgba(16,33,59,.08)}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg)}body{font-family:"Montserrat",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--text);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}button,label,summary{font:inherit}a{color:inherit}
-.topbar{height:64px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--border);display:flex;align-items:center}.topbar-inner{width:100%;max-width:1280px;margin:0 auto;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:11px}.brand-mark{width:34px;height:34px;border-radius:9px;background:var(--strong);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:900;letter-spacing:-.02em}.brand-title{font-size:14px;font-weight:800;color:var(--strong);letter-spacing:-.02em}.brand-sub{font-size:10.5px;color:var(--muted);margin-top:1px}.status{font-size:10px;font-weight:800;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--muted)}.status.failure{color:var(--danger);background:var(--danger-soft);border-color:#f2cdcd}.status.success{color:var(--success);background:var(--success-soft);border-color:#cde7d8}
-.container{max-width:1280px;margin:0 auto;padding:30px 28px 44px}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}.eyebrow{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}h1{margin:5px 0 7px;font-size:31px;line-height:1.08;letter-spacing:-.045em;color:var(--strong);font-weight:800}.build-number{color:#6d7b91;font-weight:700}.hero-meta{font-size:11.5px;color:var(--muted)}.hero-meta a{color:var(--primary);font-weight:750;text-decoration:none}.hero-meta a:hover{text-decoration:underline}
-.release{display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(180deg,#fff,#fcfdff);border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:13px;padding:15px 18px;margin-bottom:15px;box-shadow:var(--shadow)}.release.hold,.release.no-go{border-left-color:var(--danger)}.release.conditional-go{border-left-color:var(--warning)}.release.go{border-left-color:var(--success)}.release-main{display:flex;align-items:center;gap:12px;min-width:0}.release-icon{font-size:16px;font-weight:900;line-height:1;color:var(--muted)}.release-title{font-size:12.5px;color:var(--strong);font-weight:800}.release-reason{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}.risk-pill{padding:5px 9px;border:1px solid var(--border);background:#fff;border-radius:999px;font-size:9.5px;font-weight:800;white-space:nowrap;color:var(--muted)}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}.stat{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:18px 18px 16px;min-height:92px;display:flex;flex-direction:column;justify-content:center;overflow:hidden;box-shadow:0 1px 2px rgba(16,33,59,.025)}.stat:after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:#e9edf3}.stat-value{color:var(--strong);font-size:28px;line-height:1;font-weight:800;letter-spacing:-.05em}.stat-label{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-top:8px}.stat:nth-child(3) .stat-value{color:var(--danger)}
-.analysis-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:12px}.analysis-title{font-size:18px;line-height:1.2;color:var(--strong);font-weight:800;letter-spacing:-.03em}.analysis-subtitle{font-size:11px;color:var(--muted);margin-top:3px}.analysis-hint{font-size:10.5px;color:var(--faint);text-align:right}
-.category-workspace{margin-top:0}.category-bar{background:rgba(255,255,255,.88);border:1px solid var(--border);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:var(--shadow);overflow:hidden}.category-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));width:100%}.category-option{display:block;text-decoration:none;min-width:0;border-right:1px solid var(--border)}.category-option:last-child{border-right:0}.category-card{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:15px 16px 14px;min-height:62px;background:#fff;cursor:pointer;white-space:nowrap;transition:background .16s ease,box-shadow .16s ease}.category-card:hover{background:#fbfcfe}.category-card:after{content:"";position:absolute;left:16px;right:16px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:transparent;transition:background .16s ease}.category-card-title{font-size:11.5px;color:#44536b;font-weight:800;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.015em}.category-card-count{display:inline-flex;align-items:center;justify-content:center;min-width:25px;height:23px;padding:0 7px;border-radius:7px;background:#f3f5f8;border:1px solid #e5e9ef;font-size:10px;font-weight:800;color:#6d7b90;flex:0 0 auto}.cat-radio:focus-visible~.category-bar{outline:3px solid rgba(31,95,191,.15);outline-offset:2px}
-#cat-app:checked~.category-bar .tab-app,#cat-env:checked~.category-bar .tab-env,#cat-data:checked~.category-bar .tab-data,#cat-script:checked~.category-bar .tab-script,#cat-unknown:checked~.category-bar .tab-unknown{background:#fff;box-shadow:0 1px 0 #fff inset}.cat-radio:checked~.category-bar .category-card:after{background:transparent}#cat-app:checked~.category-bar .tab-app:after,#cat-env:checked~.category-bar .tab-env:after,#cat-data:checked~.category-bar .tab-data:after,#cat-script:checked~.category-bar .tab-script:after,#cat-unknown:checked~.category-bar .tab-unknown:after{background:var(--primary)}#cat-app:checked~.category-bar .tab-app .category-card-title,#cat-env:checked~.category-bar .tab-env .category-card-title,#cat-data:checked~.category-bar .tab-data .category-card-title,#cat-script:checked~.category-bar .tab-script .category-card-title,#cat-unknown:checked~.category-bar .tab-unknown .category-card-title{color:var(--strong)}#cat-app:checked~.category-bar .tab-app .category-card-count,#cat-env:checked~.category-bar .tab-env .category-card-count,#cat-data:checked~.category-bar .tab-data .category-card-count,#cat-script:checked~.category-bar .tab-script .category-card-count,#cat-unknown:checked~.category-bar .tab-unknown .category-card-count{background:var(--primary-soft);border-color:#d6e4f7;color:var(--primary-dark)}
-.failures-section{background:#fff;border:1px solid var(--border);border-top:0;border-radius:0 0 14px 14px;box-shadow:var(--shadow);padding:18px 18px 20px}.category-panel{display:none}.category-panel-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:3px 2px 14px;margin-bottom:10px;border-bottom:1px solid var(--border)}.category-panel-title{font-size:17px;line-height:1.2;font-weight:800;color:var(--strong);letter-spacing:-.025em}.category-panel-count{font-size:10.5px;color:var(--muted);font-weight:700}.test-list{display:flex;flex-direction:column;gap:7px}.test-item{border:1px solid var(--border);border-radius:11px;background:#fff;overflow:hidden;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.test-item:hover{border-color:#c8d5e6;box-shadow:0 4px 14px rgba(16,33,59,.05)}.test-item[open]{border-color:#b9cae1;box-shadow:var(--shadow-open)}.test-summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 16px;cursor:pointer}.test-summary::-webkit-details-marker{display:none}.test-summary:before{content:"";width:7px;height:7px;border-right:2px solid #7f8b9d;border-bottom:2px solid #7f8b9d;transform:rotate(-45deg);flex:0 0 auto;transition:transform .16s ease,border-color .16s ease;margin-left:1px}.test-item[open]>.test-summary:before{transform:rotate(45deg);border-color:var(--primary)}.test-main{min-width:0;flex:1}.test-name{display:block;font-size:13.5px;line-height:1.45;font-weight:800;color:var(--strong);overflow-wrap:anywhere}.test-secondary{margin-top:5px;display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:10.5px}.test-secondary span:nth-child(even){color:#b6beca}.test-side{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex-shrink:0}.badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;font-size:9.5px;font-weight:800;white-space:nowrap;border:1px solid transparent}.sev-critical,.sev-high{color:var(--danger);background:var(--danger-soft);border-color:#f5d1d1}.sev-medium{color:var(--warning);background:var(--warning-soft);border-color:#f1dfbf}.sev-low{color:var(--success);background:var(--success-soft);border-color:#d1e9dc}.conf-high{color:var(--primary-dark);background:var(--primary-soft);border-color:#d6e4f7}.conf-medium{color:#5f55a3;background:#f3f1fd;border-color:#ded9f6}.conf-low{color:var(--muted);background:#f6f7f9;border-color:#e6e9ee}
-.test-detail{border-top:1px solid var(--border);padding:18px 20px 20px;background:linear-gradient(180deg,#fbfcfe,#f9fbfd)}.failure-pattern{border:1px solid #dbe3ee;border-radius:10px;background:#fff;padding:13px 14px 14px;margin-bottom:12px}.failure-pattern .info-label{margin-bottom:6px}.pattern-text{display:block;color:var(--strong);font-size:12.5px;font-weight:700;line-height:1.55}.detail-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.snapshot-grid{margin-bottom:14px}.snapshot-grid .info-card:nth-child(1),.snapshot-grid .info-card:nth-child(2),.snapshot-grid .info-card:nth-child(3){grid-column:span 2}.snapshot-grid .info-card:nth-child(n+4){grid-column:span 3}.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.analysis-grid .analysis-owner{align-self:start}.info-card{border:1px solid var(--border);border-radius:10px;background:#fff;padding:13px 14px}.info-card.full{grid-column:1/-1}.snapshot-grid .info-card{padding:11px 12px;background:#fbfcfe}.snapshot-heading{font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}.analysis-grid .info-card{padding:15px 16px}.analysis-grid .analysis{background:#fff}.analysis-grid .analysis .info-label{color:var(--primary-dark)}.info-label{font-size:8.75px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--muted);margin-bottom:6px}.info-value{font-size:12.5px;line-height:1.65;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}.trace{font:10.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.disclosure{margin-top:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}.disclosure summary{cursor:pointer;padding:12px 14px;font-size:10.5px;font-weight:800;color:var(--strong);background:#fff}.disclosure summary:hover{background:#fbfcfe}.disclosure .tech-block{border-top:1px solid var(--border);padding:13px 14px;background:#f7f8fa}.disclosure pre{margin:8px 0 0;padding:12px;border-radius:8px;background:#18283f;color:#eef3f8;max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.tech-label{margin-top:12px}.empty{padding:48px 20px;text-align:center;color:var(--muted);font-size:11.5px}.footer{color:var(--faint);text-align:center;font-size:9.5px;margin-top:18px}
-.cat-radio{position:absolute;opacity:0;pointer-events:none}#cat-app:checked~.failures-section .panel-app,#cat-env:checked~.failures-section .panel-env,#cat-data:checked~.failures-section .panel-data,#cat-script:checked~.failures-section .panel-script,#cat-unknown:checked~.failures-section .panel-unknown{display:block}
-@media (max-width:900px){.container{padding:22px 16px 30px}.topbar-inner{padding:0 16px}.category-card{padding-left:12px;padding-right:12px}.category-card-title{font-size:10.5px}.analysis-hint{display:none}}
-@media (max-width:700px){.container{padding:16px 10px 24px}.topbar{height:60px}.brand-sub{display:none}.stats{grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:22px}.stat{min-height:78px;padding:14px}.stat-value{font-size:24px}.hero{flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:16px}h1{font-size:26px}.category-bar{overflow-x:auto}.category-tabs{grid-template-columns:repeat(5,minmax(170px,1fr));min-width:850px}.failures-section{padding:14px}.category-panel-header{align-items:flex-start;flex-direction:column;gap:4px}.test-summary{align-items:flex-start}.test-side{justify-content:flex-start}.detail-grid{grid-template-columns:1fr}.snapshot-grid .info-card:nth-child(n){grid-column:auto}.analysis-grid{grid-template-columns:1fr}.info-card.full{grid-column:auto}.release{align-items:flex-start;flex-direction:column}.risk-pill{align-self:flex-start}}
-@media print{.category-panel{display:block!important}.category-bar{box-shadow:none}.failures-section{box-shadow:none}.test-item{break-inside:avoid}}
+{detailed_findings}
 """
 
-def severity_css_class(value: Any) -> str:
-    return "sev-" + str(value or "low").strip().lower().replace(" ", "-")
-
-
-
-def info_card_html(label: str, value: Any, full: bool = False, extra: str = "") -> str:
-    classes = "info-card" + (" full" if full else "")
-    value_class = "info-value" + ((" " + extra) if extra else "")
-    return f'<div class="{classes}"><div class="info-label">{html_escape(label)}</div><div class="{value_class}">{html_escape(value or "Not available")}</div></div>'
-
-
-def generate_html_dashboard(metadata: BuildMetadata, metrics: BuildMetrics, findings: List[Dict[str, Any]], risk: Dict[str, Any]) -> str:
-    """Generate a compact tab-style failure dashboard without JavaScript.
-
-    Five categories are displayed in one horizontal tab row. The first category
-    is selected by default. Selecting another category switches the content below
-    to that category's failed tests. Each failed test is a native HTML disclosure
-    row (<details>) so its analysis expands inline without JavaScript, keeping the
-    report compatible with restrictive Jenkins CSP settings.
-    """
-    grouped = finding_category_map(findings)
-    recommendation = risk["recommendation"]
-    rec_class = recommendation.lower().replace("_", "-")
-    rec_icon = "✓" if recommendation == "GO" else "⚠" if recommendation == "CONDITIONAL_GO" else "!"
-    pipeline_class = (
-        "success" if metadata.pipeline_status == "SUCCESS"
-        else "failure" if metadata.pipeline_status in {"FAILURE", "FAILED"}
-        else ""
-    )
-    build_link = (
-        f'<a href="{html_escape(metadata.build_url)}" target="_blank" rel="noopener">'
-        'Open Jenkins build ↗</a>'
-        if metadata.build_url else ""
-    )
-
-    category_defs = [
-        ("Application Defect", "cat-app", "panel-app"),
-        ("Environment Issue", "cat-env", "panel-env"),
-        ("Test Data Issue", "cat-data", "panel-data"),
-        ("Script Defect", "cat-script", "panel-script"),
-        ("Unknown", "cat-unknown", "panel-unknown"),
-    ]
-
-    category_inputs = "".join(
-        f'<input class="cat-radio" type="radio" name="category" id="{radio}" '
-        f'{"checked" if idx == 0 else ""}>'
-        for idx, (_, radio, _) in enumerate(category_defs)
-    )
-
-    category_tabs = "".join(
-        f'<label class="category-option" for="{radio}">'
-        f'<span class="category-card tab-{radio[4:]}">'
-        f'<span class="category-card-title">{html_escape(category)}</span>'
-        f'<span class="category-card-count">{len(grouped[category])}</span>'
-        f'</span></label>'
-        for category, radio, _ in category_defs
-    )
-
-    def render_detail(finding: Dict[str, Any]) -> str:
-        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
-        snapshot_cards = [
-            info_card_html("Status", finding.get("status")),
-            info_card_html("Severity", finding.get("severity")),
-        ]
-        if finding.get("module"):
-            snapshot_cards.append(info_card_html("Module", finding.get("module")))
-        if finding.get("suite"):
-            snapshot_cards.append(info_card_html("Suite", finding.get("suite")))
-        if finding.get("exception_type"):
-            snapshot_cards.append(info_card_html("Exception", finding.get("exception_type")))
-        if finding.get("feature"):
-            snapshot_cards.append(info_card_html("Feature / Story", finding.get("feature")))
-        if related_count:
-            snapshot_cards.append(
-                info_card_html(
-                    "Related Tests",
-                    f'{related_count} other test{"s" if related_count != 1 else ""} show the same failure pattern',
-                    True,
-                )
-            )
-
-        tech = (
-            '<details class="disclosure"><summary>View technical error details</summary>'
-            '<div class="tech-block">'
-            '<div class="tech-section"><div class="info-label">Failure message</div>'
-            f'<div class="info-value trace">{html_escape(finding.get("failure_message") or "No failure message available.")}</div></div>'
-            '<div class="tech-section"><div class="info-label">Stack trace</div>'
-            f'<pre>{html_escape(finding.get("stack_trace") or "No stack trace available.")}</pre></div>'
-            '</div></details>'
-        )
-        return (
-            f'<div class="test-detail">'
-            f'<div class="snapshot-heading">Test snapshot</div>'
-            f'<div class="detail-grid snapshot-grid">{"".join(snapshot_cards)}</div>'
-            f'<div class="analysis-grid">'
-            f'{info_card_html("Root Cause Analysis", finding.get("root_cause"), True, "analysis")}'
-            f'{info_card_html("Suggested Fix", finding.get("suggested_fix"), True, "analysis")}'
-            f'{info_card_html("Evidence", finding.get("evidence"), True, "analysis")}'
-            f'</div>{tech}'
-            f'</div>'
-        )
-
-    def render_test_item(finding: Dict[str, Any]) -> str:
-        module = finding.get("module") or finding.get("suite")
-        secondary = []
-        if module:
-            secondary.append(html_escape(module))
-        if finding.get("exception_type"):
-            secondary.append(html_escape(finding.get("exception_type")))
-        related_count = max(0, int(finding.get("duplicate_count", 1)) - 1)
-        if related_count:
-            secondary.append(f'{related_count} similar test{"s" if related_count != 1 else ""}')
-        secondary_html = "".join(
-            f'<span>{item}</span><span>•</span>' for item in secondary[:-1]
-        )
-        if secondary:
-            secondary_html += f'<span>{secondary[-1]}</span>'
-        return (
-            f'<details class="test-item">'
-            f'<summary class="test-summary">'
-            f'<span class="test-main">'
-            f'<span class="test-name">{html_escape(finding.get("test_name"))}</span>'
-            f'<span class="test-secondary">{secondary_html}</span>'
-            f'</span>'
-            f'<span class="test-side">'
-            f'<span class="badge {severity_css_class(finding.get("severity"))}">{html_escape(finding.get("severity"))}</span>'
-            f'</span>'
-            f'</summary>'
-            f'{render_detail(finding)}'
-            f'</details>'
-        )
-
-    panels = []
-    for category, _, panel_class in category_defs:
-        items = grouped[category]
-        body = "".join(render_test_item(finding) for finding in items)
-        if not body:
-            body = '<div class="empty">No failed tests in this category.</div>'
-        plural = "s" if len(items) != 1 else ""
-        panels.append(
-            f'<section class="category-panel {panel_class}">'
-            f'<div class="category-panel-header">'
-            f'<div><div class="eyebrow">Failure category</div>'
-            f'<div class="category-panel-title">{html_escape(category)}</div></div>'
-            f'<div class="category-panel-count">{len(items)} failed test{plural}</div>'
-            f'</div>'
-            f'<div class="test-list">{body}</div>'
-            f'</section>'
-        )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CI Failure Triage — Build {html_escape(metadata.build_number)}</title>
-<style>{CSS}</style>
+<title>CI Triage Report</title>
+<style>
+  :root {{
+    --blue: #2563eb; --blue-light: #eff6ff;
+    --red: #dc2626; --red-light: #fef2f2;
+    --amber: #d97706; --amber-light: #fffbeb;
+    --green: #16a34a; --green-light: #f0fdf4;
+    --gray-bg: #f8fafc; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--gray-bg); color: var(--text); margin: 0; padding: 0;
+  }}
+  .wrapper {{ max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }}
+  .header {{
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: white; border-radius: 14px; padding: 28px 32px; margin-bottom: 20px;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.25);
+  }}
+  .header h1 {{ margin: 0 0 8px; font-size: 26px; }}
+  .header .sub {{ opacity: 0.85; font-size: 14px; margin-bottom: 10px; }}
+  .header a {{ color: #dbeafe; text-decoration: underline; font-size: 14px; }}
+  .badge {{
+    display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 700;
+    font-size: 13px; margin-top: 8px;
+  }}
+  .badge.GO {{ background: var(--green-light); color: var(--green); }}
+  .badge.CONDITIONAL_GO {{ background: var(--amber-light); color: var(--amber); }}
+  .badge.HOLD {{ background: var(--amber-light); color: var(--amber); }}
+  .badge.NO_GO {{ background: var(--red-light); color: var(--red); }}
+  .stat-row {{ display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }}
+  .stat {{
+    flex: 1; min-width: 130px; background: white; border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }}
+  .stat .num {{ font-size: 26px; font-weight: 700; }}
+  .stat .label {{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }}
+  .stat.pass .num {{ color: var(--green); }}
+  .stat.fail .num {{ color: var(--red); }}
+  .stat.total .num {{ color: var(--blue); }}
+  .card {{
+    background: white; border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }}
+  .card h2 {{
+    margin-top: 0; font-size: 18px; color: var(--blue);
+    border-bottom: 2px solid var(--blue-light); padding-bottom: 10px;
+  }}
+  table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13.5px; }}
+  th {{
+    background: var(--blue-light); color: var(--blue); text-align: left;
+    padding: 10px 12px; border-bottom: 2px solid var(--border);
+  }}
+  td {{ padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  tr:last-child td {{ border-bottom: none; }}
+  .sev {{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }}
+  .sev.Critical {{ background: var(--red-light); color: var(--red); }}
+  .sev.High {{ background: var(--red-light); color: var(--red); }}
+  .sev.Medium {{ background: var(--amber-light); color: var(--amber); }}
+  .sev.Low {{ background: var(--green-light); color: var(--green); }}
+  code {{ background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; color: #be185d; }}
+  pre {{ background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }}
+  h3 {{ color: var(--text); font-size: 16px; margin: 22px 0 8px; padding-top: 12px; border-top: 1px dashed var(--border); }}
+  .kv {{ margin: 4px 0; }}
+  .kv b {{ color: var(--muted); font-weight: 600; }}
+  .footer {{ text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; }}
+</style>
 </head>
 <body>
-<div class="app">
-<header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark">T</div><div><div class="brand-title">CI Failure Triage</div><div class="brand-sub">Failure classification &amp; root-cause analysis</div></div></div><div class="status {pipeline_class}">Pipeline: {html_escape(metadata.pipeline_status)}</div></div></header>
-<main class="container">
-<section class="hero"><div><div class="eyebrow">Build overview</div><h1>{html_escape(metadata.job_name)} <span class="build-number">#{html_escape(metadata.build_number)}</span></h1><div class="hero-meta">Generated {html_escape(metadata.timestamp)} &nbsp; {build_link}</div></div></section>
-<section class="release {rec_class}"><div class="release-main"><div class="release-icon">{rec_icon}</div><div><div class="release-title">Release recommendation: {html_escape(recommendation.replace("_", " "))}</div><div class="release-reason">{html_escape(risk["reason"])}</div></div></div><div class="risk-pill">Risk: {html_escape(risk["risk_level"])}</div></section>
-<section class="stats"><div class="stat"><div class="stat-value">{metrics.total}</div><div class="stat-label">Total tests</div></div><div class="stat"><div class="stat-value">{metrics.passed}</div><div class="stat-label">Passed</div></div><div class="stat"><div class="stat-value">{metrics.failed + metrics.broken}</div><div class="stat-label">Failed / broken</div></div><div class="stat"><div class="stat-value">{metrics.pass_rate}%</div><div class="stat-label">Pass rate</div></div></section>
-<div class="analysis-heading"><div><div class="analysis-title">Failure analysis</div><div class="analysis-subtitle">Select a category to review failed tests, then expand a test for the analysis.</div></div><div class="analysis-hint">5 failure categories</div></div>
-<div class="category-workspace">
-{category_inputs}
-<section class="category-bar"><div class="category-tabs">{category_tabs}</div></section>
-<section class="failures-section">{"".join(panels)}</section>
+<div class="wrapper">
+  <div class="header">
+    <h1>&#128269; CI Triage Report</h1>
+    <div class="sub">Automated AI-powered failure analysis</div>
+    <a href="{build_url}">{build_url}</a><br>
+    <span class="badge {recommendation}">{recommendation_label}</span>
+  </div>
+  <div class="stat-row">
+    <div class="stat total"><div class="num">{total}</div><div class="label">Total Tests</div></div>
+    <div class="stat pass"><div class="num">{passed}</div><div class="label">Passed</div></div>
+    <div class="stat fail"><div class="num">{failed}</div><div class="label">Failed</div></div>
+    <div class="stat"><div class="num">{pass_rate}%</div><div class="label">Pass Rate</div></div>
+  </div>
+  <div class="card">
+    <h2>Executive Summary</h2>
+    <p>{executive_summary}</p>
+  </div>
+  <div class="card">
+    <h2>Failure Overview</h2>
+    <table>
+      <tr><th>Test</th><th>Category</th><th>Severity</th><th>Confidence</th><th>Cause</th></tr>
+      {failure_rows_html}
+    </table>
+  </div>
+  <div class="card">
+    <h2>Correlation Analysis</h2>
+    <p>{correlation_notes}</p>
+  </div>
+  <div class="card">
+    <h2>Detailed Findings</h2>
+    {detailed_findings_html}
+  </div>
+  <div class="footer">Generated automatically by the AI Triage Agent</div>
 </div>
-<div class="footer">Generated by the AI-Powered CI Failure Triage Engine</div>
-</main></div>
-</body></html>"""
+</body>
+</html>
+"""
 
 
-# ============================================================
-# 12. OUTPUT / ORCHESTRATION
-# ============================================================
+def render_reports(analysis: Dict[str, Any], build_url: str, metrics: Dict[str, Any],
+                    md_path: str, html_path: str) -> None:
+    findings = analysis["findings"]
 
-def write_reports(markdown: str, html_report: str, markdown_path: str, html_path: str) -> None:
-    Path(markdown_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(html_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(markdown_path).write_text(markdown, encoding="utf-8")
-    Path(html_path).write_text(html_report, encoding="utf-8")
+    md_rows = "\n".join(
+        f"| {f['test_name']} | {f['category']} | {f['severity']} | {f['confidence']} | "
+        f"{f['root_cause'][:80]}... |" if len(f['root_cause']) > 80 else
+        f"| {f['test_name']} | {f['category']} | {f['severity']} | {f['confidence']} | {f['root_cause']} |"
+        for f in findings
+    ) or "| _No failures_ | | | | |"
 
+    md_detail = "\n\n".join(
+        f"### {f['test_name']}\n"
+        f"- **Category:** {f['category']}  \n"
+        f"- **Severity:** {f['severity']} (confidence: {f['confidence']})  \n"
+        f"- **Root cause:** {f['root_cause']}  \n"
+        f"- **Evidence:** {f['evidence']}  \n"
+        f"- **Suggested fix:** {f['suggested_fix']}  \n"
+        f"- **Suggested owner:** {f['suggested_owner']}"
+        for f in findings
+    ) or "_No failures to detail._"
 
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="AI-powered CI failure triage engine")
-    parser.add_argument("--report-dir", required=True, help="Directory containing Allure *-result.json files")
-    parser.add_argument("--build-url", default=os.getenv("BUILD_URL", ""), help="Jenkins build URL")
-    parser.add_argument("--output", required=True, help="Output path for Markdown report")
-    parser.add_argument("--html-output", required=True, help="Output path for HTML dashboard")
-    parser.add_argument("--no-console-log", action="store_true", help="Skip Jenkins console log collection")
-    parser.add_argument(
-        "--build-start-file",
-        help=(
-            "File containing the current Jenkins build start timestamp. "
-            "When provided, only Allure result files created/updated from that "
-            "timestamp onward are included."
-        ),
+    md = MD_TEMPLATE.format(
+        build_url=build_url,
+        recommendation=analysis["recommendation"],
+        highest_severity=analysis["highest_severity"],
+        executive_summary=analysis["executive_summary"],
+        failure_rows=md_rows,
+        correlation_notes=analysis["correlation_notes"],
+        detailed_findings=md_detail,
     )
-    return parser.parse_args()
+    Path(md_path).write_text(md, encoding="utf-8")
 
+    html_rows = "".join(
+        f"<tr><td>{esc(f['test_name'])}</td><td>{esc(f['category'])}</td>"
+        f"<td><span class='sev {f['severity']}'>{esc(f['severity'])}</span></td>"
+        f"<td>{esc(f['confidence'])}</td><td>{esc(f['root_cause'])}</td></tr>"
+        for f in findings
+    ) or "<tr><td colspan='5'>No failures</td></tr>"
+
+    html_detail = "".join(
+        f"<h3>{esc(f['test_name'])}</h3>"
+        f"<div class='kv'><b>Category:</b> {esc(f['category'])}</div>"
+        f"<div class='kv'><b>Severity:</b> <span class='sev {f['severity']}'>{esc(f['severity'])}</span> "
+        f"(confidence: {esc(f['confidence'])})</div>"
+        f"<div class='kv'><b>Root cause:</b> {esc(f['root_cause'])}</div>"
+        f"<div class='kv'><b>Evidence:</b> {esc(f['evidence'])}</div>"
+        f"<div class='kv'><b>Suggested fix:</b> {esc(f['suggested_fix'])}</div>"
+        f"<div class='kv'><b>Suggested owner:</b> {esc(f['suggested_owner'])}</div>"
+        for f in findings
+    ) or "<p>No failures to detail.</p>"
+
+    rec = analysis["recommendation"]
+    rec_labels = {"GO": "GO", "CONDITIONAL_GO": "CONDITIONAL GO", "HOLD": "HOLD", "NO_GO": "NO-GO"}
+
+    html_out = HTML_TEMPLATE.format(
+        build_url=esc(build_url, build_url),
+        recommendation=rec,
+        recommendation_label=rec_labels.get(rec, rec),
+        total=metrics["total"], passed=metrics["passed"],
+        failed=metrics["failed"] + metrics["broken"], pass_rate=metrics["pass_rate"],
+        executive_summary=esc(analysis["executive_summary"]),
+        failure_rows_html=html_rows,
+        correlation_notes=esc(analysis["correlation_notes"]),
+        detailed_findings_html=html_detail,
+    )
+    Path(html_path).write_text(html_out, encoding="utf-8")
+
+
+# ============================================================
+# Main
+# ============================================================
 
 def main() -> None:
-    args = parse_arguments()
-    report_dir = Path(args.report_dir)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--report-dir", required=True,
+                         help="Root of either a generated Allure report or a raw allure-results dir")
+    parser.add_argument("--build-url", required=True)
+    parser.add_argument("--output", required=True, help="Markdown output path")
+    parser.add_argument("--html-output", required=True, help="HTML output path")
+    parser.add_argument("--no-console-log", action="store_true")
+    args = parser.parse_args()
 
+    report_dir = Path(args.report_dir)
     if not report_dir.exists():
-        print(f"Error: report directory not found: {report_dir}", file=sys.stderr)
+        print(f"Report dir not found: {report_dir}", file=sys.stderr)
         sys.exit(1)
 
-    print("=" * 68)
-    print("AI-POWERED CI FAILURE TRIAGE ENGINE")
-    print("=" * 68)
+    tests, source_format = collect_tests(report_dir)
+    metrics = compute_metrics(tests)
+    print(f"Parsed {metrics['total']} tests ({source_format}): "
+          f"{metrics['passed']} passed, {metrics['failed']} failed, {metrics['broken']} broken")
 
-    print("[1/6] Collecting CI evidence...")
-    build_start_file = Path(args.build_start_file) if args.build_start_file else None
-    allure_results = load_allure_results(report_dir, build_start_file)
-    metrics, failures = summarize_allure_results(allure_results)
-    console_log = "" if args.no_console_log else fetch_console_log(args.build_url)
-    metadata = collect_build_metadata(args.build_url, console_log)
-    print(f"      Tests={metrics.total}, Passed={metrics.passed}, Failed={metrics.failed}, Broken={metrics.broken}")
+    console_tail = "" if args.no_console_log else fetch_console_log_tail(args.build_url)
 
-    print("[2/6] Preprocessing failures...")
-    processed_failures = preprocess_failures(failures)
+    failures = [t for t in tests if t["status"] in ("failed", "broken")]
+    if not failures:
+        if not console_tail:
+            analysis = normalize_analysis({
+                "executive_summary": "All tests passed. No triage needed.",
+                "release_recommendation": "GO",
+                "correlation_notes": "",
+                "findings": [],
+            }, tests)
+            render_reports(analysis, args.build_url, metrics, args.output, args.html_output)
+            print("No failures found — wrote a clean-bill-of-health report.")
+            return
+        prompt = (f"Build: {args.build_url}\n\nNo individual test failures were recorded, but the "
+                  f"build may have failed at an earlier stage. Console log tail:\n```\n{console_tail}\n```")
+    else:
+        prompt = build_user_prompt(tests, args.build_url, metrics, console_tail)
 
-    print("[3/6] Correlating failures...")
-    clusters = cluster_failures(processed_failures)
-    print(f"      Identified {len(clusters)} failure cluster(s)")
-
-    print("[4/6] Performing AI triage analysis...")
-    raw_analysis = perform_ai_triage(metadata, metrics, processed_failures, clusters, console_log)
-    findings = build_validated_findings(processed_failures, clusters, raw_analysis)
-
-    print("[5/6] Assessing release risk...")
-    risk = assess_risk(raw_analysis, findings)
-
-    print("[6/6] Generating reports...")
-    markdown_report = generate_markdown_report(metadata, metrics, findings, risk)
-    html_report = generate_html_dashboard(metadata, metrics, findings, risk)
-    write_reports(markdown_report, html_report, args.output, args.html_output)
-
-    print("=" * 68)
-    print("TRIAGE COMPLETED")
-    print(f"Release Recommendation : {risk['recommendation']}")
-    print(f"Risk Level             : {risk['risk_level']}")
-    print(f"Failed/ Broken Tests   : {len(findings)}")
-    print(f"Markdown Report        : {args.output}")
-    print(f"HTML Dashboard         : {args.html_output}")
-    print("=" * 68)
+    raw_analysis = call_openai(prompt)
+    analysis = normalize_analysis(raw_analysis, tests)
+    render_reports(analysis, args.build_url, metrics, args.output, args.html_output)
+    print(f"Wrote triage reports to {args.output} and {args.html_output}")
 
 
 if __name__ == "__main__":
