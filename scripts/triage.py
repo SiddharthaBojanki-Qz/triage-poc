@@ -1066,6 +1066,27 @@ def call_openai(evidence: Dict[str, Any]) -> Dict[str, Any]:
         kwargs["reasoning"] = {"effort": reasoning_effort}
 
     response = client.responses.create(**kwargs)
+
+    # Log OpenAI token usage for Jenkins/console visibility.
+    usage = getattr(response, "usage", None)
+    if usage:
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or 0
+        reasoning_tokens = getattr(
+            getattr(usage, "output_tokens_details", None),
+            "reasoning_tokens",
+            0,
+        ) or 0
+
+        print("\n========== OpenAI Usage ==========")
+        print(f"Model: {model}")
+        print(f"Input tokens:  {input_tokens}")
+        print(f"Output tokens: {output_tokens}")
+        print(f"Total tokens:  {total_tokens}")
+        if reasoning_tokens:
+            print(f"Reasoning tokens: {reasoning_tokens}")
+        print("==================================\n")
     text = _extract_openai_text(response)
 
     if not text:
